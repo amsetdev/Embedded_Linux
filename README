@@ -1,0 +1,292 @@
+# MQTT Remote Terminal
+
+A lightweight remote terminal system that lets you control an **STM32MP1** (or any ARM Linux board) from your PC over MQTT — no SSH, no VPN, just a broker in the middle.
+
+```
+┌─────────────┐        MQTT / TLS        ┌──────────────────┐
+│  Your PC    │  ──────────────────────► │  HiveMQ Cloud    │
+│  (Python)   │  ◄──────────────────────  │  Broker          │
+└─────────────┘                          └────────┬─────────┘
+                                                  │
+                                         ┌────────▼─────────┐
+                                         │  STM32MP1 Board  │
+                                         │  (C agent)       │
+                                         └──────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+mqtt-terminal/
+├── pi_terminal_agent.c   # C agent — runs on the STM32MP1 board
+├── cJSON.c               # Bundled JSON library (no install needed)
+├── cJSON.h
+└── mqtt_terminal.py      # Python terminal client — runs on your PC
+```
+
+---
+
+## Board Agent (`pi_terminal_agent.c`)
+
+### What it does
+- Connects to HiveMQ Cloud over **TLS/MQTT**
+- Listens for commands on `data/terminal/input`
+- Runs them in a **persistent `/bin/sh` session** (so `cd`, `export`, etc. work correctly across commands)
+- Publishes output back on `data/terminal/output` as JSON
+- Blocks dangerous commands (`rm -rf /`, `mkfs`, fork bombs)
+- Runs as a **systemd service** — starts automatically on boot
+
+### Persistent shell architecture
+
+Each command runs inside one long-lived shell process, not a new one each time:
+
+```
+Agent process            /bin/sh (persistent)
+    │                         │
+    ├── write "cd /tmp\n" ──► │  shell changes directory
+    ├── write "echo END" ───► │  sentinel marks end of output
+    ├── read until sentinel ◄─┤
+    │                         │
+    ├── write "ls\n" ───────► │  ls runs in /tmp  ✓
+    └── read output ◄─────────┘
+```
+
+### Dependencies
+None needed on the board — the binary is **fully statically linked**.
+
+Only one file must exist on the board:
+```
+/etc/ssl/certs/ca-certificates.crt
+```
+
+### Cross-compile in WSL
+
+**1. One-time setup:**
+```bash
+# Get bundled cJSON
+wget https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.c
+wget https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.h
+
+# Install ARM toolchain and libs
+sudo dpkg --add-architecture armhf
+sudo apt update
+sudo apt install gcc-arm-linux-gnueabihf libssl-dev:armhf
+
+# Build mosquitto static lib from source
+wget https://mosquitto.org/files/source/mosquitto-2.0.18.tar.gz
+tar xf mosquitto-2.0.18.tar.gz && cd mosquitto-2.0.18
+cmake -DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc \
+      -DCMAKE_SYSTEM_NAME=Linux \
+      -DWITH_STATIC_LIBRARIES=ON \
+      -DWITH_SHARED_LIBRARIES=OFF \
+      -DWITH_CLIENTS=OFF -DWITH_BROKER=OFF \
+      -DWITH_APPS=OFF -DDOCUMENTATION=OFF .
+make -j$(nproc)
+cd ..
+```
+
+**2. Compile:**
+```bash
+arm-linux-gnueabihf-gcc -o pi_terminal_agent \
+    pi_terminal_agent.c cJSON.c \
+    -I. \
+    -I mosquitto-2.0.18/include \
+    -static \
+    mosquitto-2.0.18/lib/libmosquitto_static.a \
+    -lssl -lcrypto -lpthread -ldl \
+    -march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard
+```
+
+**3. Verify:**
+```bash
+file pi_terminal_agent
+# ELF 32-bit LSB executable, ARM, statically linked  ✓
+```
+
+**4. Transfer to board:**
+```bash
+# Copy CA cert (one-time)
+scp /etc/ssl/certs/ca-certificates.crt root@<board-ip>:/etc/ssl/certs/
+
+# Copy binary
+scp pi_terminal_agent root@<board-ip>:/home/root/edb_c/mqtt_terminal/
+```
+
+### Install as systemd service
+
+On the board:
+
+```bash
+nano /etc/systemd/system/mqtt-terminal.service
+```
+
+```ini
+[Unit]
+Description=MQTT Terminal Agent
+After=network.target
+
+[Service]
+ExecStartPre=/bin/sleep 10
+ExecStart=/home/root/edb_c/mqtt_terminal/pi_terminal_agent
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload
+systemctl enable mqtt-terminal
+systemctl start mqtt-terminal
+```
+
+**Useful service commands:**
+```bash
+systemctl status mqtt-terminal     # check status
+journalctl -fu mqtt-terminal       # live logs
+systemctl restart mqtt-terminal    # restart after update
+```
+
+---
+
+## PC Client (`mqtt_terminal.py`)
+
+### What it does
+- Connects to the same HiveMQ broker over TLS
+- Presents a colored terminal prompt: `root@stm32mp1:~#`
+- Sends commands to the board and waits for the response before showing the next prompt
+- Auto-reconnects if the broker drops
+- Supports command history (↑ ↓ arrow keys)
+
+### Install
+
+```bash
+pip install paho-mqtt pyreadline3   # pyreadline3 needed on Windows
+```
+
+### Run
+
+```bash
+python mqtt_terminal.py
+```
+
+### Terminal appearance
+
+```
+  ╔══════════════════════════════════════════════════════╗
+  ║         MQTT  REMOTE  TERMINAL  CLIENT               ║
+  ║         Target : stm32mp1                            ║
+  ╚══════════════════════════════════════════════════════╝
+
+  ●  Board online  [2026-05-30 09:28:33]
+
+root@stm32mp1:~# ls
+── 2026-05-30 09:28:35 ──────────────────────────────
+  edb_c
+  ipc_test
+  ipc_test.c
+
+root@stm32mp1:~# cd edb_c
+── 2026-05-30 09:28:37 ──────────────────────────────
+  (no output)
+
+root@stm32mp1:~#
+```
+
+### Local commands
+
+| Command | Action |
+|---------|--------|
+| `clear` | Clear the screen |
+| `exit` / `quit` | Disconnect and quit |
+| `help` | Show help |
+| ↑ / ↓ | Navigate command history |
+
+All other commands are sent to the board.
+
+---
+
+## MQTT Topics
+
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `data/terminal/input` | PC → Board | Command to run |
+| `data/terminal/output` | Board → PC | Command output |
+
+### Message format
+
+**Input (PC → Board):**
+```json
+{ "cmd": "ls -la" }
+```
+
+**Output (Board → PC):**
+```json
+{
+  "type": "output",
+  "command": "ls -la",
+  "output": "total 32\ndrwxr-xr-x ...",
+  "timestamp": "2026-05-30 09:28:35"
+}
+```
+
+**Status:**
+```json
+{
+  "type": "status",
+  "message": "STM32MP1 terminal online",
+  "timestamp": "2026-05-30 09:28:33"
+}
+```
+
+---
+
+## Configuration
+
+Both files share the same broker config — edit at the top of each file:
+
+```c
+// pi_terminal_agent.c
+#define MQTT_BROKER   "your-broker.hivemq.cloud"
+#define MQTT_PORT     8883
+#define MQTT_USERNAME "username"
+#define MQTT_PASSWORD "password"
+```
+
+```python
+# mqtt_terminal.py
+MQTT_BROKER   = 'your-broker.hivemq.cloud'
+MQTT_PORT     = 8883
+MQTT_USERNAME = 'username'
+MQTT_PASSWORD = 'password'
+```
+
+---
+
+## Blocked Commands
+
+The agent refuses the following for safety:
+
+- `rm -rf /`
+- `mkfs`
+- `:(){ :|:& };:` (fork bomb)
+
+To add more, edit the `BLOCKED` array in `pi_terminal_agent.c` and recompile.
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `TLS setup failed` | Check `/etc/ssl/certs/ca-certificates.crt` exists on board |
+| `No response from board` | Check service is running: `systemctl status mqtt-terminal` |
+| `cd` not working | Use absolute paths or `cd /path && ls` in one command |
+| Service not starting on boot | Check `ExecStart` path matches binary location |
+| Binary runs as text file | Recompile — the `.c` source was copied instead of the binary |
+| `ModuleNotFoundError: readline` | Run `pip install pyreadline3` on Windows |
