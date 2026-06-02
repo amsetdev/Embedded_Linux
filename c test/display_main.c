@@ -78,7 +78,7 @@ struct drm_mode_map_dumb { uint32_t handle, pad; uint64_t offset; };
  * CONFIGURATION — edit or override via settings.conf at runtime
  * ========================================================================== */
 
-#define MODBUS_PORT_DEF      "/dev/ttyACM0"
+#define MODBUS_PORT_DEF      "/dev/modbus_uart"
 #define MODBUS_BAUD_DEF      9600
 #define MODBUS_SLAVE_DEF     1
 #define MODBUS_PARITY        'N'

@@ -38,7 +38,7 @@
  * USER CONFIGURATION
  * ========================================================================== */
 
-#define MODBUS_PORT       "/dev/ttyACM0"
+#define MODBUS_PORT       "modbus_uart"
 #define MODBUS_BAUD       9600
 #define MODBUS_SLAVE_ID   1
 #define MODBUS_PARITY     'N'
