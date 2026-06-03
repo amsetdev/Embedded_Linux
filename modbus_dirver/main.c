@@ -1,20 +1,3 @@
-/**
- ******************************************************************************
- * @file    modbus_uart_driver.c
- * @brief   A7 Linux kernel driver — /dev/modbus_uart
- *
- *  Exposes shared RETRAM circular buffer as a tty-like char device.
- *  Userspace can open /dev/modbus_uart and use it exactly like a serial port:
- *    write() → puts bytes into a7_to_m4 buffer → M4 sends out UART7
- *    read()  → gets bytes from m4_to_a7 buffer ← M4 received from slave
- *
- *  Works with libmodbus:
- *    modbus_new_rtu("/dev/modbus_uart", 9600, 'N', 8, 1)
- *
- *  Build:  make (see Makefile)
- *  Load:   insmod modbus_uart_driver.ko
- ******************************************************************************
- */
 
 #include <linux/module.h>
 #include <linux/kernel.h>

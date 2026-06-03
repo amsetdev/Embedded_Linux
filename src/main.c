@@ -8,15 +8,7 @@
 #include "modbus_rtu.h"
 #include "mqtt.h"
 
-/* ============================================================================
- * SIGNAL HANDLER
- * ========================================================================== */
-
 static void handle_signal(int sig) { (void)sig; running = 0; }
-
-/* ============================================================================
- * MAIN
- * ========================================================================== */
 
 int main(void)
 {
@@ -41,7 +33,7 @@ int main(void)
         LOG_WARN("Display disabled — running headless");
     }
 
-    /* ---- Welcome splash ---- */
+ 
     if (disp_ok) {
         fb_fill(COL_BLUE);
         fb_rect(0, 0, DISP_W, 40, COL_HDRBLUE);
@@ -55,13 +47,13 @@ int main(void)
         sleep(2);
     }
 
-    /* ---- Touch ---- */
+
     touch_init();
 
-    /* ---- Register CSV ---- */
+ 
     if (!parse_csv()) return 1;
 
-    /* ---- Modbus ---- */
+
     if (!mb_connect()) {
         if (disp_ok) {
             fb_fill(COL_BLUE);
@@ -72,20 +64,15 @@ int main(void)
         return 1;
     }
 
-    /* ---- DB + MQTT ---- */
+
     db_init();
     mqtt_init();
 
-    /* ---- Modbus background thread ---- */
+
     pthread_t mb_thread;
     pthread_create(&mb_thread, NULL, mb_thread_func, NULL);
     LOG_INFO("Modbus background thread started");
 
-    /* -----------------------------------------------------------------------
-     * Display loop — ~10 fps, independent of Modbus timing.
-     * Reads shared counters under mutex; individual point values are
-     * naturally atomic on ARM 32-bit aligned loads so need no per-point lock.
-     * --------------------------------------------------------------------- */
     while (running) {
         touch_poll();
 
