@@ -1,18 +1,3 @@
-/**
- ******************************************************************************
- * @file    main.c
- * @brief   STM32MP157F-DK2 — Modbus RTU + MQTT + DRM Display
- *
- * Entry point only.  All subsystem logic lives in:
- *   modbus.c  — RS485 GPIO, UART, Modbus RTU framing
- *   display.c — DRM framebuffer, touch, UI rendering
- *   settings.c — settings.conf load/save
- *   data.c    — ModbusPoint store, CSV parser, point-read
- *   mqtt.c    — mosquitto client, JSON payload, publish
- *   offline.c — SQLite offline message store
- ******************************************************************************
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -27,9 +12,6 @@
 #include "mqtt.h"
 #include "storage.h"
 
-/* ============================================================================
- * GLOBALS SHARED BETWEEN MAIN AND MODBUS THREAD
- * ========================================================================== */
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
 static int       mb_ok_flag     = 0;
@@ -37,14 +19,9 @@ static int       mb_success_cnt = 0;
 static pthread_mutex_t points_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t mb_thread_id;
 
-/* ============================================================================
- * SIGNAL HANDLER
- * ========================================================================== */
 static void handle_signal(int sig) { (void)sig; running = 0; }
 
-/* ============================================================================
- * MODBUS BACKGROUND THREAD
- * ========================================================================== */
+
 static void *mb_thread_func(void *arg)
 {
     (void)arg;
@@ -79,15 +56,13 @@ static void *mb_thread_func(void *arg)
     return NULL;
 }
 
-/* ============================================================================
- * MAIN
- * ========================================================================== */
+
 int main(void)
 {
     signal(SIGINT,  handle_signal);
     signal(SIGTERM, handle_signal);
 
-    /* 1. Load configuration */
+   
     settings_load();
 
     printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
@@ -99,12 +74,12 @@ int main(void)
            RS485_TX_GUARD_US);
     printf("  Interval : %ds\n\n", cfg.interval);
 
-    /* 2. RS485 DE pin — must be LOW before UART opens */
+   
     if (rs485_gpio_init() < 0)
         fprintf(stderr, "[WARN] RS485 GPIO init failed — DE pin uncontrolled\n");
     rs485_rx();   /* ensure LOW */
 
-    /* 3. Open raw UART */
+   
     if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0) {
         fprintf(stderr, "[ERROR] Cannot open %s\n", cfg.modbus_port);
         rs485_gpio_close();
@@ -112,7 +87,7 @@ int main(void)
     }
     printf("[UART] Open: %s @ %d baud\n", cfg.modbus_port, cfg.modbus_baud);
 
-    /* 4. Display */
+  
     if (drm_init() == 0) {
         disp_ok = 1;
         fb_fill(COL_BLACK);
@@ -121,7 +96,7 @@ int main(void)
         fprintf(stderr, "[WARN] Display disabled — running headless\n");
     }
 
-    /* 5. Splash screen */
+   
     if (disp_ok) {
         fb_fill(COL_BLUE);
         fb_rect(0,0,DISP_W,40,COL_HDRBLUE);
@@ -135,27 +110,27 @@ int main(void)
         sleep(2);
     }
 
-    /* 6. Touch */
+    
     touch_init();
 
-    /* 7. Parse CSV register list */
+   
     if (!parse_csv()) {
         uart_close();
         rs485_gpio_close();
         return 1;
     }
 
-    /* 8. SQLite offline store */
+   
     offline_init();
 
-    /* 9. MQTT */
+   
     mqtt_init();
 
-    /* 10. Start Modbus background thread */
+  
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
 
-    /* 11. Main UI loop */
+   
     while (running) {
         touch_poll();
 
@@ -177,7 +152,7 @@ int main(void)
     printf("\n[MAIN] Shutting down...\n");
     pthread_join(mb_thread_id, NULL);
 
-    rs485_rx();           /* DE LOW on exit */
+    rs485_rx();         
     rs485_gpio_close();
     uart_close();
 
