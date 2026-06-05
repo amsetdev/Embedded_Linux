@@ -1,27 +1,37 @@
 #ifndef MQTT_H
 #define MQTT_H
 
-/* ============================================================================
- * MQTT MODULE
- *
- * HiveMQ Cloud TLS connection via libmosquitto.
- * Offline payloads are spooled to SQLite so nothing is lost when the
- * broker is unreachable.
- * ========================================================================== */
+/**
+ * mqtt.h — MQTT client (mosquitto) with TLS, connect/disconnect callbacks,
+ *           JSON payload builder, and offline publish fallback.
+ */
 
-/* Initialise SQLite offline store; returns 1 on success */
-int  db_init(void);
+#include <stddef.h>   /* size_t */
 
-/* Store payload in offline DB (called automatically by mqtt_publish) */
-void db_store(const char *payload);
+/* ---- Compile-time MQTT defaults --------------------------------------- */
+#define MQTT_TOPIC      "modbus/data"
+#define PAYLOAD_MAX     131072
 
-/* Initialise mosquitto, set TLS, connect, start loop; returns 1 on success */
-int  mqtt_init(void);
+/* ---- State ------------------------------------------------------------- */
+extern volatile int mqtt_connected;
 
-/* Publish payload to MQTT_TOPIC; falls back to db_store on failure */
+/* ---- API --------------------------------------------------------------- */
+
+/** Initialise mosquitto library and attempt broker connection.
+ *  Uses cfg (AppSettings) for broker / port / credentials.
+ *  Returns 1 on success, 0 on failure. */
+int mqtt_init(void);
+
+/** Build a JSON payload from the current points array.
+ *  Writes into buf (size buflen).  Format:
+ *    {"ts":<unix_ms>,"values":{"Label":value,...}} */
+void build_payload(char *buf, size_t buflen);
+
+/** Publish payload to MQTT_TOPIC.
+ *  Falls back to offline_store() if not connected or publish fails. */
 void mqtt_publish(const char *payload);
 
-/* Graceful shutdown */
+/** Disconnect and free mosquitto resources. */
 void mqtt_cleanup(void);
 
 #endif /* MQTT_H */

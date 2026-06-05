@@ -16,11 +16,12 @@ BUILD_DIR := build
 TARGET  := $(BUILD_DIR)/main
 
 SRCS    := $(SRC_DIR)/main.c       \
-           $(SRC_DIR)/config.c     \
+           $(SRC_DIR)/settings.c     \
            $(SRC_DIR)/display.c    \
-           $(SRC_DIR)/touch.c      \
-           $(SRC_DIR)/modbus_rtu.c \
-           $(SRC_DIR)/mqtt.c
+           $(SRC_DIR)/storage.c      \
+           $(SRC_DIR)/modbus.c \
+           $(SRC_DIR)/mqtt.c \
+            $(SRC_DIR)/data.c
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
