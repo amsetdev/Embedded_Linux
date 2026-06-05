@@ -1,19 +1,6 @@
 #ifndef MODBUS_H
 #define MODBUS_H
 
-/**
- * modbus.h — RS485 GPIO, raw UART, and Modbus RTU transaction layer
- *
- * RS485 DE pin PE10 = gpiochip4 line 10, controlled manually.
- *
- * CORRECT DE TIMING SEQUENCE (per read):
- *  1. rs485_tx()       — PE10 HIGH, 200 us settle
- *  2. write() raw bytes
- *  3. tcdrain()        — wait until HW shift register physically empty
- *  4. rs485_rx()       — PE10 LOW immediately after last bit
- *  5. read() raw bytes — receive slave reply
- */
-
 #include <stdint.h>
 
 /* ---- Register type enum ------------------------------------------------ */

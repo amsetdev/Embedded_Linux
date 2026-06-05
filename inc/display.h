@@ -1,16 +1,6 @@
 #ifndef DISPLAY_H
 #define DISPLAY_H
 
-/**
- * display.h — DRM framebuffer, touch input, and UI drawing
- *
- * Provides:
- *  - DRM dumb-buffer init / flush / cleanup
- *  - Resistive/capacitive touch polling
- *  - 5x7 pixel-font text and primitive drawing helpers
- *  - Status screen and Settings screen renderers
- */
-
 #include <stdint.h>
 
 /* ---- Display resolution ----------------------------------------------- */

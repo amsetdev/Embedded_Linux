@@ -1,13 +1,6 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-/**
- * settings.h — Application configuration (file-backed)
- *
- * Reads/writes settings.conf in the working directory.
- * Call settings_load() at startup; settings_save() when changed.
- */
-
 /* ---- Defaults ---------------------------------------------------------- */
 #define MODBUS_PORT_DEF  "/dev/ttySTM2"
 #define MODBUS_BAUD_DEF  9600

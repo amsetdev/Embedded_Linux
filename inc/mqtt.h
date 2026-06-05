@@ -1,11 +1,6 @@
 #ifndef MQTT_H
 #define MQTT_H
 
-/**
- * mqtt.h — MQTT client (mosquitto) with TLS, connect/disconnect callbacks,
- *           JSON payload builder, and offline publish fallback.
- */
-
 #include <stddef.h>   /* size_t */
 
 /* ---- Compile-time MQTT defaults --------------------------------------- */

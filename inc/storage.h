@@ -1,13 +1,6 @@
 #ifndef STORAGE_H
 #define STORAGE_H
 
-/**
- * offline.h — SQLite-backed offline message store
- *
- * Messages that cannot be published immediately (MQTT offline) are
- * written to a local SQLite database so they can be re-published
- * once connectivity is restored.
- */
 
 #define MQTT_STORAGE_DB "mqtt_storage.db"
 

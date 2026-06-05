@@ -1,22 +1,16 @@
 #ifndef DATA_H
 #define DATA_H
 
-/**
- * data.h — ModbusPoint data store, CSV parser, and point-read logic
- *
- * Owns the global points[] array.  All other modules access it via
- * data_get_points() / data_get_count() rather than extern arrays.
- */
 
-#include "modbus.h"  /* RegType */
+#include "modbus.h" 
 
-/* ---- Limits ------------------------------------------------------------ */
+
 #define MAX_POINTS  2000
 #define LABEL_MAX   64
 #define UNIT_MAX    16
 #define CONFIG_FILE "registers.csv"
 
-/* ---- Point structure --------------------------------------------------- */
+
 typedef struct {
     char    label[LABEL_MAX];
     int     address;
@@ -27,7 +21,7 @@ typedef struct {
     int     valid;
 } ModbusPoint;
 
-/* ---- API --------------------------------------------------------------- */
+
 
 /** Parse registers.csv and populate the internal points array.
  *  Falls back to 20 synthetic sample points if the file is missing.
