@@ -21,7 +21,7 @@ static pthread_t mb_thread_id;
 
 static void handle_signal(int sig) { (void)sig; running = 0; }
 
-
+// modbus thread
 static void *mb_thread_func(void *arg)
 {
     (void)arg;
