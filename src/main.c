@@ -30,6 +30,7 @@ static void *mb_thread_func(void *arg)
     while (running) {
         /* Read all configured Modbus points */
         read_all_points();
+        printf("modbus address can read form excel and use ");
 
         int s = 0;
         ModbusPoint *pts = data_get_points();
@@ -38,7 +39,7 @@ static void *mb_thread_func(void *arg)
             if (pts[i].valid) s++;
 
         pthread_mutex_lock(&points_mutex);
-        mb_ok_flag     = (uart_fd >= 0);
+        mb_ok_flag     = (uart_fd >= 0);    
         mb_success_cnt = s;
         mb_cycle++;
         pthread_mutex_unlock(&points_mutex);
@@ -46,10 +47,14 @@ static void *mb_thread_func(void *arg)
         printf("[MB] Cycle %d done — %d/%d ok\n", mb_cycle, s, cnt);
 
         /* Build JSON and publish (or store offline) */
+        printf("bulding json payload ");
         build_payload(payload, sizeof(payload));
+        // mqtt_publish(payload);
+        printf("publishing json :");
         mqtt_publish(payload);
 
         /* Wait cfg.interval seconds before next cycle (interruptible) */
+        // time interval for next modbus cycle
         for (int t = 0; t < cfg.interval * 10 && running; t++)
             usleep(100000);
     }
@@ -59,10 +64,11 @@ static void *mb_thread_func(void *arg)
 
 int main(void)
 {
+
     signal(SIGINT,  handle_signal);
     signal(SIGTERM, handle_signal);
-
-   
+    //if user can change software setting then startup can import mqtt,time interval configration form setting.config
+    printf("load the setting form setting.config");
     settings_load();
 
     printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
@@ -73,11 +79,14 @@ int main(void)
     printf("  DE fix   : write() -> tcdrain() -> guard(%dus) -> DE LOW -> read()\n",
            RS485_TX_GUARD_US);
     printf("  Interval : %ds\n\n", cfg.interval);
+    //time interval print 
 
    
-    if (rs485_gpio_init() < 0)
+    if (rs485_gpio_init() < 0) //PE10 pin rs485
         fprintf(stderr, "[WARN] RS485 GPIO init failed — DE pin uncontrolled\n");
-    rs485_rx();   /* ensure LOW */
+    rs485_rx();   /* ensure LOW */  
+    // low =resive mod
+    //high = trasmit mode 
 
    
     if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0) {
@@ -112,7 +121,7 @@ int main(void)
 
     
     touch_init();
-
+    //kernal interface touch handale by kernal 
    
     if (!parse_csv()) {
         uart_close();
@@ -122,15 +131,17 @@ int main(void)
 
    
     offline_init();
+    //offline data storage 
 
    
     mqtt_init();
+    //mqtt init connect to mqtt
 
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
 
-   
+   //MB loop
     while (running) {
         touch_poll();
 
