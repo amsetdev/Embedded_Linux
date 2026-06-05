@@ -1,7 +1,3 @@
-/**
- * mqtt.c — MQTT client with TLS, JSON payload builder, offline fallback
- */
-
 #include "mqtt.h"
 #include "settings.h"
 #include "data.h"
@@ -12,15 +8,10 @@
 #include <time.h>
 #include <mosquitto.h>
 
-/* ============================================================================
- * GLOBALS
- * ========================================================================== */
+
 volatile int      mqtt_connected = 0;
 static struct mosquitto *mosq = NULL;
 
-/* ============================================================================
- * CALLBACKS
- * ========================================================================== */
 static void on_connect(struct mosquitto *m, void *ud, int rc)
 {
     (void)m; (void)ud;
@@ -36,9 +27,7 @@ static void on_disconnect(struct mosquitto *m, void *ud, int rc)
     printf("[MQTT] Disconnected\n");
 }
 
-/* ============================================================================
- * INIT
- * ========================================================================== */
+
 int mqtt_init(void)
 {
     mosquitto_lib_init();
@@ -64,9 +53,7 @@ int mqtt_init(void)
     return 1;
 }
 
-/* ============================================================================
- * JSON PAYLOAD BUILDER
- * ========================================================================== */
+
 void build_payload(char *buf, size_t buflen)
 {
     long long ts = (long long)time(NULL) * 1000;
@@ -86,9 +73,6 @@ void build_payload(char *buf, size_t buflen)
     snprintf(buf+pos, buflen-pos, "}}");
 }
 
-/* ============================================================================
- * PUBLISH (with offline fallback)
- * ========================================================================== */
 void mqtt_publish(const char *payload)
 {
     if (mqtt_connected) {
@@ -102,9 +86,7 @@ void mqtt_publish(const char *payload)
     offline_store(payload);
 }
 
-/* ============================================================================
- * CLEANUP
- * ========================================================================== */
+
 void mqtt_cleanup(void)
 {
     if (mosq) {

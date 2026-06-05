@@ -1,7 +1,3 @@
-/**
- * data.c — ModbusPoint data store, CSV parser, and point-read logic
- */
-
 #include "data.h"
 #include "modbus.h"
 #include "settings.h"
@@ -12,18 +8,14 @@
 #include <ctype.h>
 #include <unistd.h>
 
-/* ============================================================================
- * INTERNAL STATE
- * ========================================================================== */
+
 static ModbusPoint points[MAX_POINTS];
 static int         point_count = 0;
 
 ModbusPoint *data_get_points(void) { return points; }
 int          data_get_count(void)  { return point_count; }
 
-/* ============================================================================
- * CSV PARSER HELPERS
- * ========================================================================== */
+
 static char *str_trim(char *s)
 {
     while (isspace((unsigned char)*s)) s++;
@@ -44,9 +36,6 @@ static int split_csv(char *line, char *cols[], int max)
     return n;
 }
 
-/* ============================================================================
- * CSV PARSE
- * ========================================================================== */
 int parse_csv(void)
 {
     FILE *f = fopen(CONFIG_FILE, "r");
@@ -117,9 +106,6 @@ int parse_csv(void)
     return 1;
 }
 
-/* ============================================================================
- * READ ONE POINT
- * ========================================================================== */
 int read_point(ModbusPoint *pt)
 {
     uint8_t fc;
@@ -146,9 +132,6 @@ int read_point(ModbusPoint *pt)
     return 0;
 }
 
-/* ============================================================================
- * READ ALL POINTS
- * ========================================================================== */
 void read_all_points(void)
 {
     extern volatile int running;

@@ -1,7 +1,3 @@
-/**
- * storage.c — SQLite-backed offline message store
- */
-
 #include "storage.h"
 #include "mqtt.h"   /* MQTT_TOPIC */
 
@@ -10,15 +6,9 @@
 #include <pthread.h>
 #include <sqlite3.h>
 
-/* ============================================================================
- * GLOBALS
- * ========================================================================== */
 static sqlite3         *db       = NULL;
 static pthread_mutex_t  db_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* ============================================================================
- * INIT
- * ========================================================================== */
 int offline_init(void)
 {
     if (sqlite3_open(MQTT_STORAGE_DB, &db) != SQLITE_OK) {
@@ -44,9 +34,6 @@ int offline_init(void)
     return 1;
 }
 
-/* ============================================================================
- * STORE
- * ========================================================================== */
 void offline_store(const char *payload)
 {
     if (!db) return;
@@ -67,9 +54,6 @@ void offline_store(const char *payload)
     pthread_mutex_unlock(&db_mutex);
 }
 
-/* ============================================================================
- * CLEANUP
- * ========================================================================== */
 void offline_cleanup(void)
 {
     if (db) { sqlite3_close(db); db = NULL; }

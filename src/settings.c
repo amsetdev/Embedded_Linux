@@ -1,9 +1,4 @@
-/**
- * settings.c — Load and save application configuration
- */
-
 #include "settings.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>

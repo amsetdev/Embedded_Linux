@@ -1,6 +1,3 @@
-/**
- * display.c — DRM framebuffer, touch input, 5x7 font, and UI screens
- */
 
 #include "display.h"
 #include "settings.h"
@@ -18,9 +15,6 @@
 #include <sys/ioctl.h>
 #include <linux/input.h>
 
-/* ============================================================================
- * DRM USERSPACE API (minimal inline definitions)
- * ========================================================================== */
 #define DRM_IOCTL_BASE          'd'
 #define DRM_IOWR(nr,t)          _IOWR(DRM_IOCTL_BASE,(nr),t)
 #define DRM_CAP_DUMB_BUFFER     0x1
@@ -72,9 +66,7 @@ struct drm_mode_map_dumb { uint32_t handle,pad; uint64_t offset; };
 
 #define DRM_DEVICE "/dev/dri/card0"
 
-/* ============================================================================
- * 5x7 FONT
- * ========================================================================== */
+
 static const uint8_t FONT5X7[][5] = {
   {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},
   {0x14,0x7F,0x14,0x7F,0x14},{0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},
@@ -110,9 +102,7 @@ static const uint8_t FONT5X7[][5] = {
   {0x00,0x41,0x36,0x08,0x00},{0x10,0x08,0x08,0x10,0x08},
 };
 
-/* ============================================================================
- * GLOBALS
- * ========================================================================== */
+
 int    disp_ok      = 0;
 Screen cur_screen   = SCREEN_STATUS;
 
@@ -130,9 +120,6 @@ static int touch_y     = -1;
 static int touch_down  = 0;
 static int touch_tapped = 0;
 
-/* ============================================================================
- * DRM
- * ========================================================================== */
 int drm_init(void)
 {
     drm_fd = open(DRM_DEVICE, O_RDWR | O_CLOEXEC);

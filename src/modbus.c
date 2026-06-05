@@ -1,7 +1,3 @@
-/**
- * modbus.c — RS485 GPIO, raw UART, and Modbus RTU transaction layer
- */
-
 #include "modbus.h"
 
 #include <stdio.h>
@@ -16,9 +12,7 @@
 #include <sys/time.h>
 #include <linux/gpio.h>
 
-/* ============================================================================
- * RS485 DE PIN — PE10 = gpiochip4 line 10
- * ========================================================================== */
+
 #define RS485_GPIOCHIP  "/dev/gpiochip4"
 #define RS485_GPIO_LINE 10
 
@@ -70,9 +64,6 @@ void rs485_gpio_close(void)
     if (gpio_fd   >= 0) { close(gpio_fd);   gpio_fd   = -1; }
 }
 
-/* ============================================================================
- * RAW UART
- * ========================================================================== */
 int uart_open(const char *port, int baud)
 {
     uart_fd = open(port, O_RDWR | O_NOCTTY | O_SYNC);
@@ -97,7 +88,6 @@ int uart_open(const char *port, int baud)
     cfsetispeed(&tty, spd);
     cfsetospeed(&tty, spd);
 
-    /* 8N1, raw mode */
     tty.c_cflag  = (tty.c_cflag & ~CSIZE) | CS8;
     tty.c_cflag &= ~(PARENB | PARODD | CSTOPB | CRTSCTS);
     tty.c_cflag |= (CLOCAL | CREAD);
@@ -105,7 +95,7 @@ int uart_open(const char *port, int baud)
     tty.c_lflag  = 0;
     tty.c_oflag  = 0;
 
-    /* Non-blocking reads — we use select() for timeout */
+    
     tty.c_cc[VMIN]  = 0;
     tty.c_cc[VTIME] = 0;
 
@@ -165,9 +155,6 @@ int uart_read_timeout(uint8_t *buf, int want, int timeout_ms)
     return got;
 }
 
-/* ============================================================================
- * MODBUS RTU — manual frame builder
- * ========================================================================== */
 uint16_t mb_crc16(const uint8_t *buf, int len)
 {
     uint16_t crc = 0xFFFF;
