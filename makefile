@@ -54,7 +54,7 @@ BOARD_DIR  := /home/root/edb_c/
 
 ## Build → build/main
 all: $(BUILD_DIR) $(TARGET)
-	@echo "✓ Build complete → $(TARGET)"
+	@echo " Build complete → $(TARGET)"
 
 ## Create build directory if it doesn't exist
 $(BUILD_DIR):
@@ -71,12 +71,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 ## Remove all build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
-	@echo "✓ Cleaned"
+	@echo " Cleaned"
 
 ## Copy binary to board
 deploy:
 	scp $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)
-	@echo "✓ Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
+	@echo " Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
 
 ## Build + deploy in one shot
 flash: all deploy
