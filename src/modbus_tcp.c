@@ -340,7 +340,7 @@ static void cleanup(master_ctx_t *ctx)
 
 /* ─── Main ───────────────────────────────────────────────────────── */
 
-int main(int argc, char *argv[])
+void modbus_tcp(int argc, char *argv[])
 {
     if (argc < 2) {
         fprintf(stderr,

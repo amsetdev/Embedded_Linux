@@ -11,6 +11,7 @@
 #include "data.h"
 #include "mqtt.h"
 #include "storage.h"
+#include "modbus_tcp.h"
 
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
@@ -141,7 +142,9 @@ int main(void)
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
 
-   //MB loop
+    // modbus_tcp();
+   
+    //MB loop
     while (running) {
         touch_poll();
 
