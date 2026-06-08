@@ -1,0 +1,7 @@
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:54:6:assert_failed	16	static
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:68:13:SystemClock_Config	8	static
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:80:13:MX_GPIO_Init	32	static
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:102:23:tick_elapsed	16	static
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:107:13:heartbeat_init	4	static,ignoring_inline_asm
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:116:13:heartbeat_update	16	static,ignoring_inline_asm
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/main.c:131:5:main	8	static

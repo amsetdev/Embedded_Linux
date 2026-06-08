@@ -1,0 +1,17 @@
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:144:10:BSP_GetVersion	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:161:9:BSP_LED_Init	5
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:210:9:BSP_LED_DeInit	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:234:9:BSP_LED_On	5
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:257:9:BSP_LED_Off	5
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:281:9:BSP_LED_Toggle	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:299:9:BSP_LED_GetState	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:328:9:BSP_PB_Init	8
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:413:9:BSP_PB_DeInit	5
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:460:10:BSP_PB_GetState	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:470:6:BSP_PB_WAKEUP_EXTI_LINE_0_IRQHandler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:479:6:BSP_PB_USER_EXTI_LINE_14_IRQHandler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:488:6:BSP_PB_USER2_EXTI_LINE_13_IRQHandler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:748:13:BUTTON_WAKEUP_EXTI_Callback	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:757:13:BUTTON_USER_EXTI_Callback	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:766:13:BUTTON_USER2_EXTI_Callback	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Drivers/BSP/STM32MP15xx_DISCO/stm32mp15xx_disco.c:776:13:BSP_PB_Callback	1

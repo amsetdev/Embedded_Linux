@@ -1,0 +1,8 @@
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:75:6:NMI_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:88:6:HardFault_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:103:6:MemManage_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:118:6:SVC_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:131:6:DebugMon_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:144:6:PendSV_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:157:6:SysTick_Handler	1
+C:/Users/Admin/Desktop/stm_m4/STM32CubeMP1/Projects/STM32MP157C-DK2/Examples/GPIO/GPIO_EXTI/Src/stm32mp1xx_it.c:182:6:EXTI14_IRQHandler	1
