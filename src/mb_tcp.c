@@ -1,17 +1,3 @@
-/*
- * modbus_master.c
- *
- * Modbus TCP master – background polling thread.
- * Reads holding registers, stores them in SQLite, and publishes
- * them to HiveMQ Cloud via MQTT/TLS.
- *
- * Build dependencies:
- *   libmodbus   (-lmodbus)
- *   libmosquitto (-lmosquitto)
- *   libsqlite3  (-lsqlite3)
- *   pthread     (-lpthread)
- */
-
 #include "mb_tcp.h"
 
 #include <stdio.h>

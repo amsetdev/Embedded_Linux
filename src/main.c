@@ -150,6 +150,7 @@ int main(void)
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
+    
     // //modbus tcp master 
     // pthread_t mb_thread_id;
     // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);

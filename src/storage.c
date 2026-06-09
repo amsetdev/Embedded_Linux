@@ -24,7 +24,7 @@ int offline_init(void)
         "  topic     TEXT,"
         "  data      TEXT,"
         "  published INTEGER DEFAULT 0);",
-        NULL, NULL, &err);
+        NULL, NULL, &err);  
 
     if (err) {
         fprintf(stderr, "[Offline] DB init: %s\n", err);
