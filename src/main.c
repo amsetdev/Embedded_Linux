@@ -11,7 +11,7 @@
 #include "data.h"
 #include "mqtt.h"
 #include "storage.h"
-#include "modbus_tcp.h"
+#include "mb_tcp.h"
 
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
@@ -66,9 +66,18 @@ static void *mb_thread_func(void *arg)
 int main(void)
 {
 
+
     signal(SIGINT,  handle_signal);
     signal(SIGTERM, handle_signal);
     //if user can change software setting then startup can import mqtt,time interval configration form setting.config
+
+      /* Fill in your slave details */
+    static mb_thread_arg_t mb_arg = {
+        .slave_ip   = "192.168.1.10",
+        .slave_port = 0,   /* 0 → uses MODBUS_DEFAULT_PORT (502)  */
+        .slave_id   = 0,   /* 0 → uses MODBUS_DEFAULT_SLAVE_ID (1) */
+    };
+
     printf("load the setting form setting.config");
     settings_load();
 
@@ -141,8 +150,10 @@ int main(void)
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
-
-    // modbus_tcp();
+    // //modbus tcp master 
+    // pthread_t mb_thread_id;
+    // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
+    // printf("[MB] Background thread started\n");
    
     //MB loop
     while (running) {
@@ -175,7 +186,7 @@ int main(void)
     mqtt_cleanup();
     offline_cleanup();
     drm_cleanup();
-
+    pthread_join(mb_thread_id, NULL);   
     printf("=== STOPPED ===\n");
     return 0;
 }

@@ -22,7 +22,7 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/modbus.c \
            $(SRC_DIR)/mqtt.c \
            $(SRC_DIR)/data.c \
-           $(SRC_DIR)/modbus_tcp.c
+           $(SRC_DIR)/mb_tcp.c
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
@@ -44,8 +44,8 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.0.110
-BOARD_DIR  := /home/root/edb_c/
+BOARD_IP   := 192.168.0.116
+BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================
 #  Targets
@@ -80,4 +80,4 @@ deploy:
 	@echo " Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
 
 ## Build + deploy in one shot
-flash: all deploy
+flash: clean all deploy
