@@ -17,4 +17,9 @@ void offline_store(const char *payload);
 /** Close the database handle. */
 void offline_cleanup(void);
 
+int  offline_init(void);
+void offline_store(const char *payload);
+void offline_replay_start(void);   /* ← new */
+void offline_cleanup(void);        /* now also joins replay thread */
+
 #endif /* OFFLINE_H */

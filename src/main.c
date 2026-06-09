@@ -150,12 +150,16 @@ int main(void)
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
+
+
+     // //modbus tcp master 
+     // pthread_t mb_thread_id;
+     // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
+     // printf("[MB] Background thread started\n");
     
-    // //modbus tcp master 
-    // pthread_t mb_thread_id;
-    // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
-    // printf("[MB] Background thread started\n");
-   
+    offline_init();
+    offline_replay_start(); 
+
     //MB loop
     while (running) {
         touch_poll();
@@ -187,7 +191,8 @@ int main(void)
     mqtt_cleanup();
     offline_cleanup();
     drm_cleanup();
-    pthread_join(mb_thread_id, NULL);   
+    pthread_join(mb_thread_id, NULL); 
+    offline_cleanup();   
     printf("=== STOPPED ===\n");
     return 0;
 }

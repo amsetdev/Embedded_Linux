@@ -1,60 +1,139 @@
 #include "storage.h"
-#include "mqtt.h"   /* MQTT_TOPIC */
+#include "mqtt.h"         
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <pthread.h>
-#include <sqlite3.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
-static sqlite3         *db       = NULL;
-static pthread_mutex_t  db_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#define STORAGE_DIR   "/home/root/edb_c/linking"
+#define MAX_PATH      256
+#define REPLAY_INTERVAL_SEC  60
+
+
+static pthread_t        replay_thread;
+static volatile int     replay_running = 0;
 
 int offline_init(void)
 {
-    if (sqlite3_open(MQTT_STORAGE_DB, &db) != SQLITE_OK) {
-        fprintf(stderr, "[Offline] DB open: %s\n", sqlite3_errmsg(db));
+    if (mkdir(STORAGE_DIR, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "[Offline] mkdir %s: %s\n",
+                STORAGE_DIR, strerror(errno));
         return 0;
     }
-
-    char *err = NULL;
-    sqlite3_exec(db,
-        "CREATE TABLE IF NOT EXISTS messages("
-        "  id        INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  timestamp INTEGER,"
-        "  topic     TEXT,"
-        "  data      TEXT,"
-        "  published INTEGER DEFAULT 0);",
-        NULL, NULL, &err);  
-
-    if (err) {
-        fprintf(stderr, "[Offline] DB init: %s\n", err);
-        sqlite3_free(err);
-        return 0;
-    }
+    printf("[Offline] Storage dir ready: %s\n", STORAGE_DIR);
     return 1;
 }
 
 void offline_store(const char *payload)
 {
-    if (!db) return;
-    pthread_mutex_lock(&db_mutex);
+    if (!payload) return;
 
-    sqlite3_stmt *st;
-    if (sqlite3_prepare_v2(db,
-            "INSERT INTO messages(timestamp, topic, data) VALUES(?,?,?);",
-            -1, &st, NULL) == SQLITE_OK) {
-        sqlite3_bind_int64(st, 1, (long long)time(NULL) * 1000);
-        sqlite3_bind_text(st,  2, MQTT_TOPIC, -1, SQLITE_STATIC);
-        sqlite3_bind_text(st,  3, payload,    -1, SQLITE_STATIC);
-        sqlite3_step(st);
-        sqlite3_finalize(st);
-        printf("[Offline] Message stored to DB\n");
+    /* millisecond timestamp as filename */
+    long long ms = (long long)time(NULL) * 1000;
+
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s/%lld.txt", STORAGE_DIR, ms);
+
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        fprintf(stderr, "[Offline] fopen %s: %s\n", path, strerror(errno));
+        return;
+    }
+    fprintf(f, "%s", payload);
+    fclose(f);
+
+    printf("[Offline] Stored → %s\n", path);
+}
+
+static void *replay_worker(void *arg)
+{
+    (void)arg;
+
+    while (replay_running) {
+        sleep(REPLAY_INTERVAL_SEC);
+
+        if (!mqtt_connected) {
+            printf("[Offline] Not connected – replay skipped\n");
+            continue;
+        }
+
+        /* ---- scan directory for the oldest unpublished .txt ---- */
+        DIR *dir = opendir(STORAGE_DIR);
+        if (!dir) {
+            fprintf(stderr, "[Offline] opendir: %s\n", strerror(errno));
+            continue;
+        }
+
+        char   oldest_name[MAX_PATH] = {0};   /* just the filename   */
+        struct dirent *entry;
+
+        while ((entry = readdir(dir)) != NULL) {
+            /* accept only  <digits>.txt  files */
+            const char *dot = strrchr(entry->d_name, '.');
+            if (!dot || strcmp(dot, ".txt") != 0) continue;
+
+            /* lexicographic min == numeric min for same-width stamps */
+            if (oldest_name[0] == '\0' ||
+                strcmp(entry->d_name, oldest_name) < 0) {
+                strncpy(oldest_name, entry->d_name, sizeof(oldest_name) - 1);
+            }
+        }
+        closedir(dir);
+
+        if (oldest_name[0] == '\0') {
+            printf("[Offline] No pending files\n");
+            continue;
+        }
+
+        /* ---- read and publish ---- */
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, oldest_name);
+
+        FILE *f = fopen(path, "r");
+        if (!f) {
+            fprintf(stderr, "[Offline] fopen %s: %s\n", path, strerror(errno));
+            continue;
+        }
+
+        /* read whole file into a buffer */
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        rewind(f);
+
+        char *buf = malloc(sz + 1);
+        if (!buf) { fclose(f); continue; }
+
+        fread(buf, 1, sz, f);
+        buf[sz] = '\0';
+        fclose(f);
+
+        printf("[Offline] Replaying %s\n", oldest_name);
+        mqtt_publish(buf);          /* fire-and-forget; kept as-is   */
+        free(buf);
     }
 
-    pthread_mutex_unlock(&db_mutex);
+    return NULL;
+}
+
+void offline_replay_start(void)
+{
+    replay_running = 1;
+    if (pthread_create(&replay_thread, NULL, replay_worker, NULL) != 0) {
+        fprintf(stderr, "[Offline] pthread_create: %s\n", strerror(errno));
+        replay_running = 0;
+    }
 }
 
 void offline_cleanup(void)
 {
-    if (db) { sqlite3_close(db); db = NULL; }
+    replay_running = 0;
+    pthread_join(replay_thread, NULL);
+    printf("[Offline] Replay thread stopped\n");
 }
