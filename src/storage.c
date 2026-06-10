@@ -64,22 +64,22 @@ static void *replay_worker(void *arg)
             continue;
         }
 
-        /* ---- scan directory for the oldest unpublished .txt ---- */
+       
         DIR *dir = opendir(STORAGE_DIR);
         if (!dir) {
             fprintf(stderr, "[Offline] opendir: %s\n", strerror(errno));
             continue;
         }
 
-        char   oldest_name[MAX_PATH] = {0};   /* just the filename   */
+        char   oldest_name[MAX_PATH] = {0};  
         struct dirent *entry;
 
         while ((entry = readdir(dir)) != NULL) {
-            /* accept only  <digits>.txt  files */
+          
             const char *dot = strrchr(entry->d_name, '.');
             if (!dot || strcmp(dot, ".txt") != 0) continue;
 
-            /* lexicographic min == numeric min for same-width stamps */
+     
             if (oldest_name[0] == '\0' ||
                 strcmp(entry->d_name, oldest_name) < 0) {
                 strncpy(oldest_name, entry->d_name, sizeof(oldest_name) - 1);
@@ -92,7 +92,7 @@ static void *replay_worker(void *arg)
             continue;
         }
 
-        /* ---- read and publish ---- */
+  
         char path[MAX_PATH];
         snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, oldest_name);
 
@@ -102,7 +102,6 @@ static void *replay_worker(void *arg)
             continue;
         }
 
-        /* read whole file into a buffer */
         fseek(f, 0, SEEK_END);
         long sz = ftell(f);
         rewind(f);
@@ -115,9 +114,17 @@ static void *replay_worker(void *arg)
         fclose(f);
 
         printf("[Offline] Replaying %s\n", oldest_name);
-        mqtt_publish(buf);          /* fire-and-forget; kept as-is   */
+        mqtt_publish(buf); 
         free(buf);
+
+      
+        if (remove(path) != 0) {
+            fprintf(stderr, "[Offline] remove %s: %s\n", path, strerror(errno));
+        } else {
+            printf("[Offline] Deleted %s\n", oldest_name);
+        }
     }
+    
 
     return NULL;
 }

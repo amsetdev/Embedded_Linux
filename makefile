@@ -22,7 +22,8 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/modbus.c \
            $(SRC_DIR)/mqtt.c \
            $(SRC_DIR)/data.c \
-           $(SRC_DIR)/mb_tcp.c
+           $(SRC_DIR)/mb_tcp.c \
+           $(SRC_DIR)/drive_logger.c
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
@@ -38,6 +39,7 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
             -lpthread   \
             -lssl       \
             -lcrypto    \
+            -lcurl      \
             -ldl        \
             -lz         \
             -lm

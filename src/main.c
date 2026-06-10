@@ -12,6 +12,7 @@
 #include "mqtt.h"
 #include "storage.h"
 #include "mb_tcp.h"
+#include "drive_logger.h"
 
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
@@ -70,7 +71,7 @@ int main(void)
     signal(SIGINT,  handle_signal);
     signal(SIGTERM, handle_signal);
     //if user can change software setting then startup can import mqtt,time interval configration form setting.config
-
+    drive_logger_start(); // logger thrade start 
    
     static mb_thread_arg_t mb_arg = {
         .slave_ip   = "192.168.1.10",
@@ -157,8 +158,8 @@ int main(void)
      // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
      // printf("[MB] Background thread started\n");
     
-    offline_init();
-    offline_replay_start(); 
+    offline_init(); 
+    offline_replay_start(); //thrade start 
 
     //MB loop
     while (running) {
@@ -194,5 +195,6 @@ int main(void)
     pthread_join(mb_thread_id, NULL); 
     offline_cleanup();   
     printf("=== STOPPED ===\n");
+    drive_logger_stop();  
     return 0;
 }
