@@ -9,23 +9,17 @@
 #include <pthread.h>
 
 #include <modbus/modbus.h>
-#include <mosquitto.h>
 #include <sqlite3.h>
 
-/* ─── Internal context (private to this translation unit) ────────── */
+
 typedef struct {
     char              slave_ip[64];
     int               slave_port;
     int               slave_id;
     modbus_t         *mb_ctx;
     sqlite3          *db;
-    struct mosquitto *mqtt;
-    int               mqtt_connected;
 } master_ctx_t;
 
-/* ═══════════════════════════════════════════════════════════════════
- * SQLite helpers
- * ═══════════════════════════════════════════════════════════════════ */
 
 static int db_init(sqlite3 **db)
 {
@@ -79,154 +73,6 @@ static int db_insert_register(sqlite3 *db, int address, uint16_t value)
     return 0;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
- * MQTT helpers
- * ═══════════════════════════════════════════════════════════════════ */
-
-static void mqtt_on_connect(struct mosquitto *mosq, void *userdata, int rc)
-{
-    (void)mosq;
-    master_ctx_t *ctx = (master_ctx_t *)userdata;
-    if (rc == 0) {
-        printf("[MQTT] Connected to HiveMQ Cloud  %s:%d\n",
-               MQTT_BROKER, MQTT_PORT);
-        ctx->mqtt_connected = 1;
-    } else {
-        fprintf(stderr, "[MQTT] Connection failed (rc=%d): %s\n",
-                rc, mosquitto_strerror(rc));
-        ctx->mqtt_connected = 0;
-    }
-}
-
-static void mqtt_on_disconnect(struct mosquitto *mosq, void *userdata, int rc)
-{
-    (void)mosq;
-    master_ctx_t *ctx = (master_ctx_t *)userdata;
-    ctx->mqtt_connected = 0;
-    if (rc != 0)
-        fprintf(stderr, "[MQTT] Unexpected disconnect (rc=%d)\n", rc);
-}
-
-static void mqtt_on_log(struct mosquitto *mosq, void *userdata,
-                        int level, const char *str)
-{
-    /* Uncomment to see verbose mosquitto debug output */
-    /* printf("[MQTT][log] %s\n", str); */
-    (void)mosq; (void)userdata; (void)level; (void)str;
-}
-
-static int mqtt_init(master_ctx_t *ctx)
-{
-    mosquitto_lib_init();
-
-    ctx->mqtt = mosquitto_new(MQTT_CLIENT_ID, true, ctx);
-    if (!ctx->mqtt) {
-        fprintf(stderr, "[MQTT] Failed to create client instance\n");
-        return -1;
-    }
-
-    mosquitto_connect_callback_set(ctx->mqtt, mqtt_on_connect);
-    mosquitto_disconnect_callback_set(ctx->mqtt, mqtt_on_disconnect);
-    mosquitto_log_callback_set(ctx->mqtt, mqtt_on_log);
-
-    int rc = mosquitto_username_pw_set(ctx->mqtt, MQTT_USERNAME, MQTT_PASSWORD);
-    if (rc != MOSQ_ERR_SUCCESS) {
-        fprintf(stderr, "[MQTT] Failed to set credentials: %s\n",
-                mosquitto_strerror(rc));
-        mosquitto_destroy(ctx->mqtt);
-        ctx->mqtt = NULL;
-        return -1;
-    }
-
-    /*
-     * TLS – HiveMQ Cloud requires TLS on port 8883.
-     * On Debian/Ubuntu the system CA bundle is at:
-     *   /etc/ssl/certs/ca-certificates.crt
-     * On OpenWrt / Yocto it may be at:
-     *   /etc/ssl/certs/ca-bundle.crt   or   /etc/ssl/cert.pem
-     */
-    rc = mosquitto_tls_set(ctx->mqtt,
-                           "/etc/ssl/certs/ca-certificates.crt",
-                           NULL,   /* capath  */
-                           NULL,   /* certfile (not needed for HiveMQ Cloud) */
-                           NULL,   /* keyfile  */
-                           NULL);  /* pw callback */
-    if (rc != MOSQ_ERR_SUCCESS) {
-        fprintf(stderr, "[MQTT] TLS setup failed: %s\n",
-                mosquitto_strerror(rc));
-        fprintf(stderr, "[MQTT] Check that the CA bundle path is correct "
-                        "for your target OS.\n");
-        mosquitto_destroy(ctx->mqtt);
-        ctx->mqtt = NULL;
-        return -1;
-    }
-
-    /* Enforce TLS 1.2 minimum */
-    mosquitto_tls_opts_set(ctx->mqtt, 1 /*verify peer*/, "tlsv1.2", NULL);
-
-    rc = mosquitto_connect(ctx->mqtt, MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE);
-    if (rc != MOSQ_ERR_SUCCESS) {
-        fprintf(stderr, "[MQTT] Connect error: %s  (will continue without MQTT)\n",
-                mosquitto_strerror(rc));
-        /* Non-fatal – Modbus polling keeps running */
-        return 0;
-    }
-
-    mosquitto_loop_start(ctx->mqtt);
-    printf("[MQTT] Connecting to HiveMQ Cloud (async)…\n");
-    return 0;
-}
-
-/*
- * Publish all registers as a single JSON payload.
- *
- * Topic  : modbus/data
- * Payload: {"ts":"2025-05-26T10:00:00","slave":"192.168.1.10","regs":[v0,...,v99]}
- */
-static void mqtt_publish_all(master_ctx_t *ctx,
-                             const uint16_t *regs, int count)
-{
-    if (!ctx->mqtt_connected)
-        return;
-
-    char ts[32];
-    time_t now = time(NULL);
-    strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%S", localtime(&now));
-
-    /* worst-case: header + 100 × "65535," + footer */
-    char payload[2048];
-    int  pos = 0;
-
-    pos += snprintf(payload + pos, sizeof(payload) - pos,
-                    "{\"ts\":\"%s\",\"slave\":\"%s\",\"regs\":[",
-                    ts, ctx->slave_ip);
-
-    for (int i = 0; i < count && pos < (int)sizeof(payload) - 16; i++) {
-        pos += snprintf(payload + pos, sizeof(payload) - pos,
-                        "%u%s",
-                        (unsigned int)regs[i],
-                        (i < count - 1) ? "," : "");
-    }
-
-    pos += snprintf(payload + pos, sizeof(payload) - pos, "]}");
-
-    int rc = mosquitto_publish(ctx->mqtt,
-                               NULL,         /* message id (out) */
-                               MQTT_TOPIC,
-                               pos,          /* payload length   */
-                               payload,
-                               1,            /* QoS 1            */
-                               false);       /* retain           */
-    if (rc != MOSQ_ERR_SUCCESS)
-        fprintf(stderr, "[MQTT] Publish failed: %s\n",
-                mosquitto_strerror(rc));
-    else
-        printf("[MQTT] Published %d registers → %s\n", count, MQTT_TOPIC);
-}
-
-/* ═══════════════════════════════════════════════════════════════════
- * Modbus helpers
- * ═══════════════════════════════════════════════════════════════════ */
 
 static modbus_t *mb_connect(const char *ip, int port, int slave_id)
 {
@@ -289,14 +135,8 @@ static int read_holding_registers(master_ctx_t *ctx)
     printf("  ──────────────────────────────────────\n");
     printf("[MB  ] %d registers read and stored.\n", rc);
 
-    mqtt_publish_all(ctx, regs, rc);
-
     return rc;
 }
-
-/* ═══════════════════════════════════════════════════════════════════
- * Cleanup
- * ═══════════════════════════════════════════════════════════════════ */
 
 static void cleanup(master_ctx_t *ctx)
 {
@@ -309,17 +149,7 @@ static void cleanup(master_ctx_t *ctx)
         sqlite3_close(ctx->db);
         printf("[DB ] Closed.\n");
     }
-    if (ctx->mqtt) {
-        mosquitto_loop_stop(ctx->mqtt, true);
-        mosquitto_destroy(ctx->mqtt);
-        mosquitto_lib_cleanup();
-        printf("[MQTT] Cleaned up.\n");
-    }
 }
-
-/* ═══════════════════════════════════════════════════════════════════
- * Public thread entry point
- * ═══════════════════════════════════════════════════════════════════ */
 
 void *mb_thread_func1(void *arg)
 {
@@ -346,17 +176,13 @@ void *mb_thread_func1(void *arg)
     printf("[CFG ] Slave Port : %d\n", ctx.slave_port);
     printf("[CFG ] Slave ID   : %d\n", ctx.slave_id);
     printf("[CFG ] Registers  : 1 to %d\n", MODBUS_NUM_REGS);
-    printf("[CFG ] Poll every : %d seconds\n", POLL_INTERVAL_SEC);
-    printf("[CFG ] MQTT Broker: %s:%d\n\n", MQTT_BROKER, MQTT_PORT);
+    printf("[CFG ] Poll every : %d seconds\n\n", POLL_INTERVAL_SEC);
 
     /* ── SQLite init ── */
     if (db_init(&ctx.db) != 0) {
         fprintf(stderr, "[MB  ] Thread exiting: DB init failed.\n");
         return NULL;
     }
-
-    /* ── MQTT init (non-fatal) ── */
-    mqtt_init(&ctx);
 
     /* ── Modbus connect ── */
     ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);

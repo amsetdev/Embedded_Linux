@@ -17,7 +17,7 @@ extern "C" {
 #define DB_PATH                     "/tmp/modbus_data.db"
 
 /* ─── MQTT / HiveMQ Cloud credentials ───────────────────────────── */
-#define MQTT_BROKER                 "2sss3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud"
+#define MQTT_BROKER                 "xx2sss3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud"
 #define MQTT_PORT                   8883
 #define MQTT_TOPIC                  "modbus/data"
 #define MQTT_USERNAME               "prasad"

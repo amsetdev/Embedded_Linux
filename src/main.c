@@ -74,7 +74,7 @@ int main(void)
     drive_logger_start(); // logger thrade start 
    
     static mb_thread_arg_t mb_arg = {
-        .slave_ip   = "192.168.1.10",
+        .slave_ip   = "192.168.0.105",
         .slave_port = 0,   
         .slave_id   = 0, 
     };
@@ -153,10 +153,10 @@ int main(void)
     printf("[MB] Background thread started\n");
 
 
-     // //modbus tcp master 
-     // pthread_t mb_thread_id;
-     // pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
-     // printf("[MB] Background thread started\n");
+    //  modbus tcp master 
+     pthread_t mb_thread_id;
+     pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
+     printf("[MB] Background thread started\n");
     
     offline_init(); 
     offline_replay_start(); //thrade start 
@@ -196,5 +196,6 @@ int main(void)
     offline_cleanup();   
     printf("=== STOPPED ===\n");
     drive_logger_stop();  
+    //cleanup(&ctx);
     return 0;
 }
