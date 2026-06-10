@@ -23,11 +23,11 @@ static volatile int     replay_running = 0;
 int offline_init(void)
 {
     if (mkdir(STORAGE_DIR, 0755) != 0 && errno != EEXIST) {
-        fprintf(stderr, "[Offline] mkdir %s: %s\n",
+        fprintf(stderr, "[SD_CARD] mkdir %s: %s\n",
                 STORAGE_DIR, strerror(errno));
         return 0;
     }
-    printf("[Offline] Storage dir ready: %s\n", STORAGE_DIR);
+    printf("[SD_CARD] Storage dir ready: %s\n", STORAGE_DIR);
     return 1;
 }
 
@@ -43,13 +43,13 @@ void offline_store(const char *payload)
 
     FILE *f = fopen(path, "w");
     if (!f) {
-        fprintf(stderr, "[Offline] fopen %s: %s\n", path, strerror(errno));
+        fprintf(stderr, "[SD_CARD] fopen %s: %s\n", path, strerror(errno));
         return;
     }
     fprintf(f, "%s", payload);
     fclose(f);
 
-    printf("[Offline] Stored → %s\n", path);
+    printf("[SD_CARD] Stored → %s\n", path);
 }
 
 static void *replay_worker(void *arg)
@@ -60,14 +60,14 @@ static void *replay_worker(void *arg)
         sleep(REPLAY_INTERVAL_SEC);
 
         if (!mqtt_connected) {
-            printf("[Offline] Not connected – replay skipped\n");
+            printf("[SD_CARD] Not connected – replay skipped\n");
             continue;
         }
 
        
         DIR *dir = opendir(STORAGE_DIR);
         if (!dir) {
-            fprintf(stderr, "[Offline] opendir: %s\n", strerror(errno));
+            fprintf(stderr, "[SD_CARD] opendir: %s\n", strerror(errno));
             continue;
         }
 
@@ -88,7 +88,7 @@ static void *replay_worker(void *arg)
         closedir(dir);
 
         if (oldest_name[0] == '\0') {
-            printf("[Offline] No pending files\n");
+            printf("[SD_CARD] No pending files\n");
             continue;
         }
 
@@ -98,7 +98,7 @@ static void *replay_worker(void *arg)
 
         FILE *f = fopen(path, "r");
         if (!f) {
-            fprintf(stderr, "[Offline] fopen %s: %s\n", path, strerror(errno));
+            fprintf(stderr, "[SD_CARD] fopen %s: %s\n", path, strerror(errno));
             continue;
         }
 
@@ -113,15 +113,15 @@ static void *replay_worker(void *arg)
         buf[sz] = '\0';
         fclose(f);
 
-        printf("[Offline] Replaying %s\n", oldest_name);
+        printf("[SD_CARD] Uploading %s\n", oldest_name);
         mqtt_publish(buf); 
         free(buf);
 
       
         if (remove(path) != 0) {
-            fprintf(stderr, "[Offline] remove %s: %s\n", path, strerror(errno));
+            fprintf(stderr, "[SD_CARD] remove %s: %s\n", path, strerror(errno));
         } else {
-            printf("[Offline] Deleted %s\n", oldest_name);
+            printf("[SD_CARD] Deleted %s\n", oldest_name);
         }
     }
     
@@ -133,7 +133,7 @@ void offline_replay_start(void)
 {
     replay_running = 1;
     if (pthread_create(&replay_thread, NULL, replay_worker, NULL) != 0) {
-        fprintf(stderr, "[Offline] pthread_create: %s\n", strerror(errno));
+        fprintf(stderr, "[SD_CARD] pthread_create: %s\n", strerror(errno));
         replay_running = 0;
     }
 }
@@ -142,5 +142,5 @@ void offline_cleanup(void)
 {
     replay_running = 0;
     pthread_join(replay_thread, NULL);
-    printf("[Offline] Replay thread stopped\n");
+    printf("[SD_CARD] Replay thread stopped\n");
 }
