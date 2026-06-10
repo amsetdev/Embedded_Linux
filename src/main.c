@@ -95,7 +95,7 @@ int main(void)
    
     if (rs485_gpio_init() < 0) //PE10 pin rs485
         fprintf(stderr, "[WARN] RS485 GPIO init failed — DE pin uncontrolled\n");
-    rs485_rx();   /* ensure LOW */  
+    rs485_rx();   
     // low =resive mod
     //high = trasmit mode 
 
