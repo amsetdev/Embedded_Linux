@@ -71,11 +71,11 @@ int main(void)
     signal(SIGTERM, handle_signal);
     //if user can change software setting then startup can import mqtt,time interval configration form setting.config
 
-      /* Fill in your slave details */
+   
     static mb_thread_arg_t mb_arg = {
         .slave_ip   = "192.168.1.10",
-        .slave_port = 0,   /* 0 → uses MODBUS_DEFAULT_PORT (502)  */
-        .slave_id   = 0,   /* 0 → uses MODBUS_DEFAULT_SLAVE_ID (1) */
+        .slave_port = 0,   
+        .slave_id   = 0, 
     };
 
     printf("load the setting form setting.config");
