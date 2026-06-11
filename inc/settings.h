@@ -1,7 +1,7 @@
 #ifndef SETTINGS_H
 #define SETTINGS_H
 
-/* ---- Defaults ---------------------------------------------------------- */
+
 #define MODBUS_PORT_DEF  "/dev/ttySTM2"
 #define MODBUS_BAUD_DEF  9600
 #define MODBUS_SLAVE_DEF 1
@@ -13,7 +13,7 @@
 
 #define SETTINGS_FILE    "settings.conf"
 
-/* ---- Settings structure ----------------------------------------------- */
+
 typedef struct {
     char modbus_port[64];
     int  modbus_baud;
@@ -25,11 +25,10 @@ typedef struct {
     int  interval;
 } AppSettings;
 
-extern AppSettings cfg;  /* global config instance */
+extern AppSettings cfg;  
 
-/* ---- API --------------------------------------------------------------- */
 void settings_defaults(void);
 void settings_load(void);
 void settings_save(void);
 
-#endif /* SETTINGS_H */
+#endif
