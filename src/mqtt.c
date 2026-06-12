@@ -9,7 +9,16 @@
 #include <mosquitto.h>
 
 
+/*
 
+also need a internet connection flag 
+if LAN is down so stop try to connect mqtt broker 
+check every second internet_connection_flag 
+if flag is 1 try to connect mqtt brokar 
+else in loop check inetrnet flage
+
+
+*/ 
 volatile int      mqtt_connected = 0;
 static struct mosquitto *mosq = NULL;
 
