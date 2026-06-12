@@ -89,6 +89,9 @@ static void *replay_worker(void *arg)
 
         if (oldest_name[0] == '\0') {
             printf("[SD_CARD] No pending files\n");
+            //close SD_CARD thrade here no more files 
+            offline_cleanup();
+            printf("[SD_CARD]----------------------- thrade close sesses ---------------------------\n"); 
             continue;
         }
 
