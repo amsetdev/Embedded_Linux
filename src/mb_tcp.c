@@ -46,7 +46,7 @@ static int db_init(sqlite3 **db)
         return -1;
     }
 
-    printf("[DB ] Initialised → %s\n", DB_PATH);
+    printf("[ MODBUS_TCP ] Initialised → %s\n", DB_PATH);
     return 0;
 }
 
@@ -116,7 +116,7 @@ static int read_holding_registers(master_ctx_t *ctx)
         return -1;
     }
 
-    printf("\n[MB  ] ── Holding Registers (addr 1–%d) ──────────────────\n",
+    printf("\n[ MODBUS_TCP ] ── Holding Registers (addr 1–%d) ──────────────────\n",
            MODBUS_NUM_REGS);
     printf("  %-6s  %-8s  %-6s\n", "Addr", "Dec", "Hex");
     printf("  ──────────────────────────────────────\n");
@@ -133,7 +133,7 @@ static int read_holding_registers(master_ctx_t *ctx)
     sqlite3_exec(ctx->db, "COMMIT;", NULL, NULL, NULL);
 
     printf("  ──────────────────────────────────────\n");
-    printf("[MB  ] %d registers read and stored.\n", rc);
+    printf("[ MODBUS_TCP ] %d registers read and stored.\n", rc);
 
     return rc;
 }
@@ -143,11 +143,11 @@ static void cleanup(master_ctx_t *ctx)
     if (ctx->mb_ctx) {
         modbus_close(ctx->mb_ctx);
         modbus_free(ctx->mb_ctx);
-        printf("[MB  ] Disconnected.\n");
+        printf("[ MODBUS_TCP ] Disconnected.\n");
     }
     if (ctx->db) {
         sqlite3_close(ctx->db);
-        printf("[DB ] Closed.\n");
+        printf("[ MODBUS_TCP ] Closed.\n");
     }
 }
 
@@ -157,7 +157,7 @@ void *mb_thread_func1(void *arg)
 
     /* ── Validate argument ── */
     if (!targ || targ->slave_ip[0] == '\0') {
-        fprintf(stderr, "[MB  ] mb_thread_func: slave_ip not set in mb_thread_arg_t\n");
+        fprintf(stderr, "[ MODBUS_TCP ] mb_thread_func: slave_ip not set in mb_thread_arg_t\n");
         return NULL;
     }
 
@@ -177,14 +177,14 @@ void *mb_thread_func1(void *arg)
 
     /* ── SQLite init ── */
     if (db_init(&ctx.db) != 0) {
-        fprintf(stderr, "[MB  ] Thread exiting: DB init failed.\n");
+        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: DB init failed.\n");
         return NULL;
     }
 
     /* ── Modbus connect ── */
     ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
     if (!ctx.mb_ctx) {
-        fprintf(stderr, "[MB  ] Thread exiting: initial Modbus connect failed.\n");
+        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: initial Modbus connect failed.\n");
         //if master cant connect to slave tcp_modbus so thrade end here
         cleanup(&ctx);
         return NULL;
@@ -198,12 +198,12 @@ void *mb_thread_func1(void *arg)
         int rc = read_holding_registers(&ctx);
 
         if (rc == -1) {
-            fprintf(stderr, "[MB  ] Attempting reconnect…\n");
+            fprintf(stderr, "[ MODBUS_TCP ] Attempting reconnect…\n");
             modbus_close(ctx.mb_ctx);
             modbus_free(ctx.mb_ctx);
             ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
             if (!ctx.mb_ctx) {
-                fprintf(stderr, "[MB  ] Reconnect failed. Thread exiting.\n");
+                fprintf(stderr, "[ MODBUS_TCP ] Reconnect failed. Thread exiting.\n");
                 break;
             }
         }
