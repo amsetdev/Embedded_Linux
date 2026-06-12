@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
-
+#include "connection.h"
 #include "modbus.h"
 #include "display.h"
 #include "settings.h"
@@ -81,7 +81,7 @@ int main(void)
 
     printf("load the setting form setting.config");
     settings_load();
-
+    connection_init();
     printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
     printf("  Port     : %s @ %d  Slave: %d\n",
            cfg.modbus_port, cfg.modbus_baud, cfg.modbus_slave);
@@ -188,7 +188,9 @@ int main(void)
     //offline_cleanup();
     drm_cleanup();
     pthread_join(mb_thread_id, NULL); 
-    offline_cleanup();   
+    offline_cleanup(); 
+    connection_stop();
+    drive_logger_stop();
     printf("=== STOPPED ===\n");
     drive_logger_stop();  
     // cleanup(&ctx);

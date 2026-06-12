@@ -23,7 +23,8 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/mqtt.c \
            $(SRC_DIR)/data.c \
            $(SRC_DIR)/mb_tcp.c \
-           $(SRC_DIR)/drive_logger.c
+           $(SRC_DIR)/drive_logger.c \
+            $(SRC_DIR)/connection.c
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
