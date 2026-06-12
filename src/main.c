@@ -32,7 +32,7 @@ static void *mb_thread_func(void *arg)
     while (running) {
         /* Read all configured Modbus points */
         read_all_points();
-        printf("modbus address can read form excel and use ");
+        printf("[ MODBUS ] modbus address can read form excel and use ");
 
         int s = 0;
         ModbusPoint *pts = data_get_points();
@@ -49,7 +49,7 @@ static void *mb_thread_func(void *arg)
         printf("[MB] Cycle %d done — %d/%d ok\n", mb_cycle, s, cnt);
 
         /* Build JSON and publish (or store offline) */
-        printf("bulding json payload ");
+        printf("[ MQTT ] bulding json payload ");
         build_payload(payload, sizeof(payload));
         // mqtt_publish(payload);
         printf("publishing json :");

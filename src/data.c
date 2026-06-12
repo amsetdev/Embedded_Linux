@@ -40,7 +40,7 @@ int parse_csv(void)
 {
     FILE *f = fopen(CONFIG_FILE, "r");
     if (!f) {
-        printf("[Data] '%s' not found — using 20 sample points\n", CONFIG_FILE);
+        printf("[ DATA ] '%s' not found — using 20 sample points\n", CONFIG_FILE);
         for (int i = 0; i < 20; i++) {
             snprintf(points[i].label, LABEL_MAX, "Point_%d", i+1);
             points[i].address   = 400 + i;
@@ -102,7 +102,7 @@ int parse_csv(void)
     }
     fclose(f);
     point_count = idx;
-    printf("[Data] Loaded %d points from %s\n", point_count, CONFIG_FILE);
+    printf("[ DATA ] Loaded %d points from %s\n", point_count, CONFIG_FILE);
     return 1;
 }
 
@@ -124,7 +124,7 @@ int read_point(ModbusPoint *pt)
             pt->valid = 1;
             return 1;
         }
-        printf("[Data] Point '%s' addr %d retry %d\n",
+        printf("[ DATA ] Point '%s' addr %d retry %d\n",
                pt->label, pt->address, retry + 1);
         usleep(50000);
     }
@@ -141,6 +141,6 @@ void read_all_points(void)
         if (read_point(&points[i])) s++; else f++;
         usleep(POINT_DELAY_US);
     }
-    printf("[Data] READ DONE — ok:%d fail:%d time:%ds\n",
+    printf("[ DATA ] READ DONE — ok:%d fail:%d time:%ds\n",
            s, f, (int)(time(NULL) - start));
 }
