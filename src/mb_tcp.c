@@ -168,12 +168,12 @@ void *mb_thread_func1(void *arg)
     strncpy(ctx.slave_ip, targ->slave_ip, sizeof(ctx.slave_ip) - 1);
     ctx.slave_port = (targ->slave_port > 0) ? targ->slave_port : MODBUS_DEFAULT_PORT;
     ctx.slave_id   = (targ->slave_id   > 0) ? targ->slave_id   : MODBUS_DEFAULT_SLAVE_ID;
-     printf("[CFG ] modbus tcp start    : %s\n", ctx.slave_ip);
-    printf("[CFG ] Slave IP   : %s\n", ctx.slave_ip);
-    printf("[CFG ] Slave Port : %d\n", ctx.slave_port);
-    printf("[CFG ] Slave ID   : %d\n", ctx.slave_id);
-    printf("[CFG ] Registers  : 1 to %d\n", MODBUS_NUM_REGS);
-    printf("[CFG ] Poll every : %d seconds\n\n", POLL_INTERVAL_SEC);
+    printf("[ MODBUS_TCP ] modbus tcp start    : %s\n", ctx.slave_ip);
+    printf("[ MODBUS_TCP ] Slave IP   : %s\n", ctx.slave_ip);
+    printf("[ MODBUS_TCP ] Slave Port : %d\n", ctx.slave_port);
+    printf("[ MODBUS_TCP ] Slave ID   : %d\n", ctx.slave_id);
+    printf("[ MODBUS_TCP ] Registers  : 1 to %d\n", MODBUS_NUM_REGS);
+    printf("[ MODBUS_TCP ] Poll every : %d seconds\n\n", POLL_INTERVAL_SEC);
 
     /* ── SQLite init ── */
     if (db_init(&ctx.db) != 0) {
