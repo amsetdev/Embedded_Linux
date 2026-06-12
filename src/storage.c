@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 
 
-#define STORAGE_DIR   "/home/root/edb_c/linking"
+#define STORAGE_DIR   "/home/root/edb_c/linking/storage"
 #define MAX_PATH      256
 #define REPLAY_INTERVAL_SEC  60
 
