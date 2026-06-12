@@ -196,6 +196,6 @@ int main(void)
     offline_cleanup();   
     printf("=== STOPPED ===\n");
     drive_logger_stop();  
-    //cleanup(&ctx);
+    // cleanup(&ctx);
     return 0;
 }
