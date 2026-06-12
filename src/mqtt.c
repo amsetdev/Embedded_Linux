@@ -17,7 +17,11 @@ static void on_connect(struct mosquitto *m, void *ud, int rc)
     (void)m; (void)ud;
     mqtt_connected = (rc == 0);
     if (rc == 0) printf("[MQTT] Connected\n");
-    else         fprintf(stderr, "[MQTT] Connection failed (code %d)\n", rc);
+       // offline_replay_start();
+       //if mqtt connect so check the sd_card offline store logs if datam is present upload the data
+       // offline_replay_start();
+    else
+        fprintf(stderr, "[MQTT] Connection failed (code %d)\n", rc);
 }
 
 static void on_disconnect(struct mosquitto *m, void *ud, int rc)

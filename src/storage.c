@@ -137,6 +137,7 @@ void offline_replay_start(void)
     replay_running = 1;
     if (pthread_create(&replay_thread, NULL, replay_worker, NULL) != 0) {
         fprintf(stderr, "[SD_CARD] pthread_create: %s\n", strerror(errno));
+        printf("[SD_CARD] pthread_create :%s\n");
         replay_running = 0;
     }
 }

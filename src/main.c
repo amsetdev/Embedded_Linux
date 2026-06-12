@@ -139,11 +139,6 @@ int main(void)
         rs485_gpio_close();
         return 1;
     }
-
-   
-    offline_init();
-    //offline data storage 
-
    
     mqtt_init();
     //mqtt init connect to mqtt
