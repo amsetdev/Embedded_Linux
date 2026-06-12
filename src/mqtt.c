@@ -19,7 +19,7 @@ else in loop check inetrnet flage
 
 
 */ 
-volatile int      mqtt_connected = 0;
+volatile int mqtt_connected = 0;
 static struct mosquitto *mosq = NULL;
 
 static void on_connect(struct mosquitto *m, void *ud, int rc)
