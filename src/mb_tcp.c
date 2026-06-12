@@ -188,6 +188,7 @@ void *mb_thread_func1(void *arg)
     ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
     if (!ctx.mb_ctx) {
         fprintf(stderr, "[MB  ] Thread exiting: initial Modbus connect failed.\n");
+        //if master cant connect to slave tcp_modbus so thrade end here
         cleanup(&ctx);
         return NULL;
     }

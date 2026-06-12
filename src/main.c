@@ -187,10 +187,10 @@ int main(void)
     rs485_gpio_close();
     uart_close();
 
-    if (disp_ok) { fb_fill(COL_BLACK); drm_flush(); }
+    //if (disp_ok) { fb_fill(COL_BLACK); drm_flush(); }
 
     mqtt_cleanup();
-    offline_cleanup();
+    //offline_cleanup();
     drm_cleanup();
     pthread_join(mb_thread_id, NULL); 
     offline_cleanup();   
