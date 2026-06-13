@@ -2,7 +2,7 @@
 #include "settings.h"
 #include "data.h"
 #include "storage.h"
-
+#include "connection.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -48,6 +48,11 @@ static void on_disconnect(struct mosquitto *m, void *ud, int rc)
     printf("[MQTT] Disconnected\n");
 }
 
+void reconnect_mqtt(void){
+
+ mosquitto_disconnect_callback_set(mosq, on_disconnect);
+
+}
 
 int mqtt_init(void)
 {
@@ -96,7 +101,7 @@ void build_payload(char *buf, size_t buflen)
 
 void mqtt_publish(const char *payload)
 {
-    if (mqtt_connected) {
+    if (mqtt_connected && internet_up) {
         if (mosquitto_publish(mosq, NULL, MQTT_TOPIC,
                 (int)strlen(payload), payload, 1, false) == MOSQ_ERR_SUCCESS) {
             printf("[MQTT] Published %zu bytes\n", strlen(payload));

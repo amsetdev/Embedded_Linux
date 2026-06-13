@@ -1,6 +1,6 @@
 #include "storage.h"
 #include "mqtt.h"         
-
+#include "connection.h" 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +59,7 @@ static void *replay_worker(void *arg)
     while (replay_running) {
         sleep(REPLAY_INTERVAL_SEC);
 
-        if (!mqtt_connected) {
+        if (!mqtt_connected && !internet_up) {
             printf("[SD_CARD] Not connected – replay skipped\n");
             continue;
         }
@@ -90,8 +90,8 @@ static void *replay_worker(void *arg)
         if (oldest_name[0] == '\0') {
             printf("[SD_CARD] No pending files\n");
             //close SD_CARD thrade here no more files 
-            offline_cleanup();
-            printf("[SD_CARD]----------------------- thrade close sesses ---------------------------\n"); 
+            //offline_cleanup();
+            //printf("[SD_CARD]----------------------- thrade close sesses ---------------------------\n"); 
             continue;
         }
 

@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <string.h>
 #include <pthread.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -18,10 +19,10 @@
 #include "drive_logger.h"
 #include "connection.h"
 
-#define CHECK_HOST       "8.8.8.8"   /* Google DNS */
+#define CHECK_HOST       "8.8.8.8"  
 #define CHECK_PORT       53
-#define CHECK_INTERVAL   5            /* seconds between checks */
-#define CHECK_TIMEOUT_S  2            /* connect() timeout in seconds */
+#define CHECK_INTERVAL   5         
+#define CHECK_TIMEOUT_S  2         
 
 volatile int internet_up = 0;
 
@@ -36,7 +37,7 @@ static int check_internet(void)
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return 0;
 
-    /* Set send/recv timeouts so connect() doesn't hang */
+   
     struct timeval tv;
     tv.tv_sec  = CHECK_TIMEOUT_S;
     tv.tv_usec = 0;
@@ -64,7 +65,7 @@ static void interruptible_sleep(int seconds)
     pthread_mutex_lock(&cv_mutex);
     while (conn_running) {
         int rc = pthread_cond_timedwait(&cv_stop, &cv_mutex, &deadline);
-        if (rc == 0) break;   /* signalled to stop */
+        if (rc == 0) break;   
 
         struct timespec now;
         clock_gettime(CLOCK_REALTIME, &now);
@@ -76,17 +77,26 @@ static void interruptible_sleep(int seconds)
 static void *connection_thread_fn(void *arg)
 {
     (void)arg;
-    printf("[Conn] Connectivity monitor started.\n");
+    printf("[ Conn ] Connectivity monitor started.------------------------------------------\n");
 
     while (conn_running) {
         int up = check_internet();
 
         if (up != internet_up) {
             printf("[Conn] Internet %s\n", up ? "UP" : "DOWN");
+        // if(internet_up){
+        //     printf("[ Connection ] reconnect mqtt \n");
+        //     reconnect_mqtt();
+        //     }
         }
         internet_up = up;
 
         interruptible_sleep(CHECK_INTERVAL);
+        if(internet_up && !mqtt_connected){
+            printf("[ Connection ] reconnect mqtt \n");
+            reconnect_mqtt();
+            }
+
     }
 
     printf("[Conn] Connectivity monitor stopped.\n");

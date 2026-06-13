@@ -17,4 +17,6 @@ void mqtt_publish(const char *payload);
 
 void mqtt_cleanup(void);
 
+void reconnect_mqtt(void);
+
 #endif /* MQTT_H */
