@@ -59,7 +59,7 @@ static void *replay_worker(void *arg)
     while (replay_running) {
         sleep(REPLAY_INTERVAL_SEC);
 
-        if (!mqtt_connected && !internet_up) {
+        if (mqtt_connected && internet_up) {
             printf("[SD_CARD] Not connected – replay skipped\n");
             continue;
         }
