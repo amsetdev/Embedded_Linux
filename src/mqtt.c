@@ -49,8 +49,9 @@ static void on_disconnect(struct mosquitto *m, void *ud, int rc)
 }
 
 void reconnect_mqtt(void){
-
- mosquitto_disconnect_callback_set(mosq, on_disconnect);
+     mqtt_cleanup();
+     mqtt_init();
+ //mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
 }
 
