@@ -1,5 +1,5 @@
 # ── EDIT THESE ──────────────────────────────────────────────────────────────
-KDIR        ?= /path/to/kernel/headers
+KDIR        ?= /kernel
 CROSS       ?= arm-linux-gnueabihf-
 BOARD_IP    ?= 192.168.1.102
 BOARD_PATH  ?= /home/root/

@@ -47,7 +47,7 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.0.101
+BOARD_IP   := 192.168.1.115
 BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================
@@ -79,7 +79,7 @@ clean:
 
 ## Copy binary to board
 deploy:
-	scp $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)
+	sshpass -e scp -o StrictHostKeyChecking=no $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)
 	@echo " Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
 
 ## Build + deploy in one shot

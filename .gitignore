@@ -10,6 +10,7 @@
 
 # Packages
 *.deb
+.claude
 
 # Build directories
 build/

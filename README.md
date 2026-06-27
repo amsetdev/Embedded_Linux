@@ -1,136 +1,127 @@
-# STM32MP157 Industrial IoT Gateway
+# STM32MP1 Industrial IoT Gateway (Cortex-A7)
 
-Industrial IoT gateway firmware and applications for the STM32MP157 dual-core SoC (Cortex-A7 + Cortex-M4).
+Modbus RTU/TCP data acquisition and MQTT cloud publishing for STM32MP157F-DK2.
 
-## Architecture
+## Prerequisites
 
-```
-Field Devices (RS-485 Modbus RTU)
-        │
-        ▼
-┌──────────────────────────────────────┐
-│  Cortex-M4 (209 MHz, FreeRTOS)      │
-│  - Modbus RTU Master (USART3)       │
-│  - RTC Timestamping                  │
-│  - Hardware Watchdog (IWDG)          │
-│  - Heartbeat Signal                  │
-├──────── RPMsg/OpenAMP ───────────────┤
-│  Cortex-A7 (650 MHz, Linux)         │
-│  - Data Broker (RPMsg → SQLite)     │
-│  - MQTT Publisher (store & forward)  │
-│  - Display Manager (LVGL, /dev/fb0) │
-│  - Net Monitor (connectivity WDG)   │
-│  - Modbus TCP Client (libmodbus)    │
-└──────────────────────────────────────┘
-        │
-        ▼
-    Cloud (MQTT over TLS)
-```
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+- Git
 
-## Directory Structure
+No other toolchain, compiler, or library installation is needed. Everything runs inside the Docker container.
 
-```
-├── m4-firmware/          Cortex-M4 FreeRTOS firmware
-│   ├── Core/Inc/         Header files
-│   ├── Core/Src/         Source files
-│   ├── OpenAMP/          Resource table for IPC
-│   ├── Linker/           Linker script
-│   └── Makefile
-├── linux-apps/           Cortex-A7 Linux applications
-│   ├── common/           Shared library (config, DB, protocol, CRC)
-│   ├── data-broker/      RPMsg reader → SQLite router
-│   ├── mqtt-publisher/   Store-and-forward MQTT client
-│   ├── display-manager/  LVGL TFT dashboard
-│   ├── net-monitor/      Network watchdog
-│   ├── modbus-tcp/       Modbus TCP client library
-│   └── CMakeLists.txt
-├── config/               Runtime configuration (JSON)
-├── systemd/              Service unit files
-├── yocto/                Yocto meta-gateway layer
-├── scripts/              Deployment and flash scripts
-└── DOCS/                 Architecture documentation
-```
-
-## Building
-
-### M4 Firmware
-
-Requires `arm-none-eabi-gcc` toolchain.
+## Quick Start
 
 ```bash
-cd m4-firmware
-make
-# Output: build/m4-firmware.elf
+# 1. Clone the repo
+git clone <repo-url>
+cd Embedded_Linux
+
+# 2. Build the Docker image (one-time)
+docker build -t stm32mp1-build .
+
+# 3. Build the project
+docker run --rm -v ${PWD}:/project stm32mp1-build
 ```
 
-### Linux Applications
+The ARM binary is output at `build/main`.
 
-Requires a Yocto SDK or cross-compilation toolchain with:
-- SQLite3
-- cJSON
-- Paho MQTT C
-- LVGL
-- libmodbus
+## Build Commands
+
+| Action | Command |
+|--------|---------|
+| Build | `docker run --rm -v ${PWD}:/project stm32mp1-build` |
+| Build + Deploy | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make flash` |
+| Deploy only | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy` |
+| Clean | `docker run --rm -v ${PWD}:/project stm32mp1-build make clean` |
+| Shell | `docker run --rm -it -v ${PWD}:/project stm32mp1-build bash` |
+
+Replace `<password>` with the board's root SSH password.
+
+**Note:** These commands use PowerShell syntax (`${PWD}`). On Linux/WSL bash, use `$(pwd)` instead.
+
+## Deploy Configuration
+
+The board connection is configured in `makefile`:
+
+```makefile
+BOARD_USER := root
+BOARD_IP   := 192.168.1.115
+BOARD_DIR  := /home/root/edb_c/linking/
+```
+
+Update `BOARD_IP` to match your board's IP address. You can also override at runtime:
 
 ```bash
-mkdir -p linux-apps/build && cd linux-apps/build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=/path/to/toolchain.cmake
-make -j$(nproc)
+docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy BOARD_IP=<your-board-ip>
 ```
 
-### Full Image (Yocto)
+## Running on the Board
 
 ```bash
-source oe-init-build-env
-bitbake-layers add-layer ../meta-gateway
-bitbake gateway m4-firmware
+# SSH into the board
+ssh root@192.168.1.115
+
+# Run the binary
+cd /home/root/edb_c/linking/
+./main
+
+# Run in background
+./main &
+
+# Check if running
+ps aux | grep main
+
+# Stop
+killall main
 ```
 
-## Deployment
+## Project Structure
+
+```
+Embedded_Linux/
+├── src/                  Application source files
+│   ├── main.c            Entry point
+│   ├── modbus.c          Modbus RTU communication
+│   ├── mqtt.c            MQTT publish (HiveMQ, TLS)
+│   ├── mb_tcp.c          Modbus TCP client
+│   ├── data.c            Register data management
+│   ├── storage.c         Offline store-and-forward (SD card)
+│   ├── settings.c        Configuration file parser
+│   ├── display.c         DRM display output
+│   ├── connection.c      Network connectivity monitor
+│   └── drive_logger.c    Drive log collection and upload
+├── inc/                  Header files
+├── modbus_dirver/        Linux kernel module (Modbus UART driver)
+├── build/                Compiled output (generated)
+├── Dockerfile            Cross-compilation environment
+├── makefile              Build, clean, deploy, flash targets
+└── .gitignore
+```
+
+## Docker Environment
+
+The Dockerfile provides a reproducible build environment based on Ubuntu 22.04 with:
+
+- `arm-linux-gnueabihf-gcc` cross-compiler
+- ARM (`armhf`) libraries: libmodbus, libmosquitto, libsqlite3, libssl, libcurl, zlib
+- `sshpass` and `scp` for deployment
+
+The Docker image only needs to be rebuilt when dependencies change. Source code is mounted at runtime, so edits on the host are reflected immediately.
+
+## Kernel Module (modbus_dirver)
+
+Building the kernel module requires STM32MP1 kernel headers:
 
 ```bash
-# Deploy Linux apps + configs to target
-./scripts/deploy.sh 192.168.1.100
-
-# Flash M4 firmware
-./scripts/flash-m4.sh 192.168.1.100
+docker run --rm -v ${PWD}:/project -v /path/to/kernel-headers:/kernel stm32mp1-build make -C modbus_dirver
 ```
 
-## Configuration
+## Troubleshooting
 
-All runtime config is in `/opt/gateway/etc/`:
-
-| File | Purpose |
-|------|---------|
-| `config.json` | MQTT broker, database, logging, network |
-| `modbus-map.json` | Slave addresses, registers, data types |
-| `display-layout.json` | TFT dashboard layout |
-
-## Data Flow
-
-1. **M4** polls Modbus RTU slaves via RS-485
-2. **M4** timestamps readings (RTC) and sends via RPMsg
-3. **Data Broker** reads RPMsg, validates CRC, inserts into SQLite
-4. **MQTT Publisher** drains SQLite queue to cloud (QoS 1)
-5. **Display Manager** shows live data on TFT via LVGL
-
-## Reliability
-
-- **Zero data loss**: SQLite WAL + QoS 1 PUBACK tracking
-- **Offline capacity**: 18 days at full poll rate (4 GB storage)
-- **Auto-recovery**: Exponential backoff reconnect, hardware watchdog
-- **Dual-core watchdog**: M4 kicks IWDG; if either core hangs, board resets
-
-## Documentation
-
-See `DOCS/` for detailed architecture documents:
-- 01: Project Overview
-- 02: System Architecture
-- 03: Cortex-M4 Firmware
-- 04: Cortex-A7 Linux
-- 05: OpenAMP/RPMsg IPC
-- 06: Modbus Integration
-- 07: MQTT Cloud
-- 08: Data Retention
-# Embedded_Linux
-# Embedded_Linux
+| Problem | Solution |
+|---------|----------|
+| `docker build` fails with 404 on armhf packages | Check internet connection; the Dockerfile fetches from `ports.ubuntu.com` |
+| `Host key verification failed` on deploy | Already handled — makefile uses `-o StrictHostKeyChecking=no` |
+| `Permission denied` on deploy | Pass the password: `-e SSHPASS=<password>` |
+| `libcurl.so.4: no version information` on board | Safe to ignore — version mismatch between build and board libcurl |
+| Docker commands fail with 500 error | Start Docker Desktop and wait for it to fully initialize |
