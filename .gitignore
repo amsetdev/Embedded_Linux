@@ -16,6 +16,8 @@
 build/
 htop_pkg/
 ncurses_pkg/
+html/
+latex/
 
 # Executables
 main
