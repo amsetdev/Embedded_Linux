@@ -24,7 +24,8 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/data.c \
            $(SRC_DIR)/mb_tcp.c \
            $(SRC_DIR)/drive_logger.c \
-            $(SRC_DIR)/connection.c
+           $(SRC_DIR)/connection.c \
+           $(SRC_DIR)/http.c 
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
@@ -43,11 +44,11 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
             -lcurl      \
             -ldl        \
             -lz         \
-            -lm
+             -lm
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.1.115
+BOARD_IP   := 192.168.0.104
 BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================
@@ -79,7 +80,12 @@ clean:
 
 ## Copy binary to board
 deploy:
-	sshpass -e scp -o StrictHostKeyChecking=no $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)
+# 	sshpass -e scp -o StrictHostKeyChecking=no $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)
+# 	@echo " Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
+
+    deploy:
+	sshpass -e scp -o StrictHostKeyChecking=no $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)/main.new
+	sshpass -e ssh -o StrictHostKeyChecking=no $(BOARD_USER)@$(BOARD_IP) 'mv -f $(BOARD_DIR)/main.new $(BOARD_DIR)/main'
 	@echo " Deployed to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
 
 ## Build + deploy in one shot

@@ -45,7 +45,7 @@ The board connection is configured in `makefile`:
 
 ```makefile
 BOARD_USER := root
-BOARD_IP   := 192.168.1.115
+BOARD_IP   := 192.168.1.100
 BOARD_DIR  := /home/root/edb_c/linking/
 ```
 

@@ -145,3 +145,4 @@ void read_all_points(void)
     printf("[ DATA ] READ DONE — ok:%d fail:%d time:%ds\n",
            s, f, (int)(time(NULL) - start));
 }
+

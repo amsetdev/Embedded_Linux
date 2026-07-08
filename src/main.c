@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "data.h"
 #include "mqtt.h"
+#include "http.h"              /* <-- ADDED (1/4): HTTP module include */
 #include "storage.h"
 #include "mb_tcp.h"
 #include "drive_logger.h"
@@ -55,6 +56,14 @@ static void *mb_thread_func(void *arg)
         printf("publishing json :");
         mqtt_publish(payload);
 
+        /* --- ADDED (3/4): HTTP test POST ---
+         * Sends the same JSON payload over HTTPS to a public echo endpoint.
+         * This proves the HTTP protocol path end-to-end (network + TLS + curl)
+         * independently of MQTT. Replace the URL with your real REST endpoint
+         * once this test passes. */
+         http_post_json("https://httpbin.org/post", payload, NULL, 0);
+        //http_post_json("http://192.168.1.102:5000/", payload, NULL, 0);
+
         /* Wait cfg.interval seconds before next cycle (interruptible) */
         // time interval for next modbus cycle
         for (int t = 0; t < cfg.interval * 10 && running; t++)
@@ -74,7 +83,7 @@ int main(void)
     drive_logger_start(); // logger thrade start 
    
     static mb_thread_arg_t mb_arg = {
-        .slave_ip   = "192.168.0.105",
+        .slave_ip   = "192.168.0.20",
         .slave_port = 0,   
         .slave_id   = 0, 
     };
@@ -143,6 +152,8 @@ int main(void)
     mqtt_init();
     //mqtt init connect to mqtt
 
+    http_init();               /* <-- ADDED (2/4): HTTP module init */
+
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
@@ -185,6 +196,7 @@ int main(void)
     //if (disp_ok) { fb_fill(COL_BLACK); drm_flush(); }
 
     mqtt_cleanup();
+    http_cleanup();            /* <-- ADDED (4/4): HTTP module cleanup */
     //offline_cleanup();
     drm_cleanup();
     pthread_join(mb_thread_id, NULL); 

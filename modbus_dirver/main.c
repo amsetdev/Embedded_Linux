@@ -10,6 +10,7 @@
 #include <linux/wait.h>
 #include <linux/timer.h>
 #include <linux/slab.h>
+         /* <-- add */  
 
 #define DRIVER_NAME     "modbus_uart"
 #define CLASS_NAME      "modbus_uart"
