@@ -56,13 +56,18 @@ static void *mb_thread_func(void *arg)
         printf("publishing json :");
         mqtt_publish(payload);
 
-        /* --- ADDED (3/4): HTTP test POST ---
-         * Sends the same JSON payload over HTTPS to a public echo endpoint.
-         * This proves the HTTP protocol path end-to-end (network + TLS + curl)
-         * independently of MQTT. Replace the URL with your real REST endpoint
-         * once this test passes. */
-         http_post_json("https://httpbin.org/post", payload, NULL, 0);
-        //http_post_json("http://192.168.1.102:5000/", payload, NULL, 0);
+        /* --- HTTP test GET, POST, PUT, DELETE --- */
+
+        //HTTP - public test
+         //http_post_json("https://httpbin.org/post", payload, NULL, 0);
+
+        //HTTP - local server test
+        http_post("http://192.168.0.106:5000/sensor", payload);
+        http_get("http://192.168.0.106:5000/sensor");
+
+        //HTTPS local server test
+        http_post("https://192.168.0.106:5000/sensor", payload);
+        http_get("https://192.168.0.106:5000/sensor");
 
         /* Wait cfg.interval seconds before next cycle (interruptible) */
         // time interval for next modbus cycle
@@ -152,7 +157,7 @@ int main(void)
     mqtt_init();
     //mqtt init connect to mqtt
 
-    http_init();               /* <-- ADDED (2/4): HTTP module init */
+    http_init();               
 
   
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
@@ -196,7 +201,7 @@ int main(void)
     //if (disp_ok) { fb_fill(COL_BLACK); drm_flush(); }
 
     mqtt_cleanup();
-    http_cleanup();            /* <-- ADDED (4/4): HTTP module cleanup */
+    http_cleanup();           
     //offline_cleanup();
     drm_cleanup();
     pthread_join(mb_thread_id, NULL); 
