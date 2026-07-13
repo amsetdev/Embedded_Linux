@@ -18,6 +18,7 @@ htop_pkg/
 ncurses_pkg/
 html/
 latex/
+DOCS/
 
 # Executables
 main
