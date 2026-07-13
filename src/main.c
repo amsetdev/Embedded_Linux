@@ -18,8 +18,11 @@ volatile int     running        = 1;
 static int       mb_cycle       = 0;
 static int       mb_ok_flag     = 0;
 static int       mb_success_cnt = 0;
+static int       mb_rtu_thread_started = 0;
+static int       mb_tcp_thread_started = 0;
 static pthread_mutex_t points_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_t mb_thread_id;
+static pthread_t mb_rtu_thread_id;
+static pthread_t mb_tcp_thread_id;
 
 static void handle_signal(int sig) { (void)sig; running = 0; }
 
@@ -77,8 +80,8 @@ int main(void)
    
     static mb_thread_arg_t mb_arg = {
         .slave_ip   = "192.168.0.105",
-        .slave_port = 0,   
-        .slave_id   = 0, 
+        .slave_port = 0,
+        .slave_id   = 0,
     };
 
     printf("load the setting form setting.config");
@@ -146,14 +149,23 @@ int main(void)
     //mqtt init connect to mqtt
 
   
-    pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
-    printf("[MB] Background thread started\n");
+    if (pthread_create(&mb_rtu_thread_id, NULL, mb_thread_func, NULL) == 0) {
+        mb_rtu_thread_started = 1;
+        printf("[MB] RTU background thread started\n");
+    } else {
+        fprintf(stderr, "[ERROR] Cannot start Modbus RTU thread\n");
+        running = 0;
+    }
 
 
     //  modbus tcp master 
-     pthread_t mb_thread_id;
-     pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
-     printf("[MB] Background thread started\n");
+    // if (pthread_create(&mb_tcp_thread_id, NULL, mb_thread_func1, &mb_arg) == 0) {
+    //     mb_tcp_thread_started = 1;
+    //     printf("[MB] TCP background thread started\n");
+    // } else {
+    //     fprintf(stderr, "[ERROR] Cannot start Modbus TCP thread\n");
+    //     running = 0;
+    // }
     
     offline_init(); 
     offline_replay_start(); //thrade start 
@@ -178,7 +190,12 @@ int main(void)
 
     /* 12. Shutdown */
     printf("\n[MAIN] Shutting down...\n");
-    pthread_join(mb_thread_id, NULL);
+    if (mb_rtu_thread_started) {
+        pthread_join(mb_rtu_thread_id, NULL);
+    }
+    if (mb_tcp_thread_started) {
+        pthread_join(mb_tcp_thread_id, NULL);
+    }
 
     rs485_rx();         
     rs485_gpio_close();
@@ -189,12 +206,10 @@ int main(void)
     mqtt_cleanup();
     //offline_cleanup();
     drm_cleanup();
-    pthread_join(mb_thread_id, NULL); 
     offline_cleanup(); 
     connection_stop();
     drive_logger_stop();
     printf("=== STOPPED ===\n");
-    drive_logger_stop();  
     // cleanup(&ctx);
     return 0;
 }

@@ -59,7 +59,7 @@ docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1
 
 ```bash
 # SSH into the board
-ssh root@192.168.1.115
+ssh root@192.168.1.112
 
 # Run the binary
 cd /home/root/edb_c/linking/

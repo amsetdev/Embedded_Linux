@@ -11,6 +11,7 @@ extern "C" {
 #define MODBUS_NUM_REGS             100
 #define MODBUS_RESPONSE_TIMEOUT     2
 #define POLL_INTERVAL_SEC           120
+#define MODBUS_CONNECT_RETRY_SEC    5
 
 #define DB_PATH                     "/tmp/modbus_data.db"
 

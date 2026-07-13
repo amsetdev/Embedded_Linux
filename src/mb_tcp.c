@@ -138,6 +138,28 @@ static int read_holding_registers(master_ctx_t *ctx)
     return rc;
 }
 
+static int connect_with_retry(master_ctx_t *ctx)
+{
+    extern volatile int running;
+
+    while (running && !ctx->mb_ctx) {
+        ctx->mb_ctx = mb_connect(ctx->slave_ip, ctx->slave_port, ctx->slave_id);
+        if (ctx->mb_ctx) {
+            return 0;
+        }
+
+        fprintf(stderr,
+                "[ MODBUS_TCP ] Connect failed. Retrying in %d seconds.\n",
+                MODBUS_CONNECT_RETRY_SEC);
+
+        for (int t = 0; t < MODBUS_CONNECT_RETRY_SEC && running; t++) {
+            sleep(1);
+        }
+    }
+
+    return -1;
+}
+
 static void cleanup(master_ctx_t *ctx)
 {
     if (ctx->mb_ctx) {
@@ -182,17 +204,16 @@ void *mb_thread_func1(void *arg)
     }
 
     /* ── Modbus connect ── */
-    ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
-    if (!ctx.mb_ctx) {
-        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: initial Modbus connect failed.\n");
-        //if master cant connect to slave tcp_modbus so thrade end here
+    if (connect_with_retry(&ctx) != 0) {
+        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: Modbus connect stopped.\n");
         cleanup(&ctx);
         return NULL;
     }
 
     /* ── Poll loop ── */
     int poll_count = 0;
-    while (1) {
+    extern volatile int running;
+    while (running) {
         printf("\n[POLL] Cycle #%d\n", ++poll_count);
 
         int rc = read_holding_registers(&ctx);
@@ -201,14 +222,16 @@ void *mb_thread_func1(void *arg)
             fprintf(stderr, "[ MODBUS_TCP ] Attempting reconnect…\n");
             modbus_close(ctx.mb_ctx);
             modbus_free(ctx.mb_ctx);
-            ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
-            if (!ctx.mb_ctx) {
-                fprintf(stderr, "[ MODBUS_TCP ] Reconnect failed. Thread exiting.\n");
+            ctx.mb_ctx = NULL;
+            if (connect_with_retry(&ctx) != 0) {
+                fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: Modbus reconnect stopped.\n");
                 break;
             }
         }
 
-        sleep(POLL_INTERVAL_SEC);
+        for (int t = 0; t < POLL_INTERVAL_SEC && running; t++) {
+            sleep(1);
+        }
     }
 
     cleanup(&ctx);
