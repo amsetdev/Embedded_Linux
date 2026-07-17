@@ -2,7 +2,7 @@
 #define SETTINGS_H
 
 
-#define MODBUS_PORT_DEF  "/dev/ttySTM2"
+#define MODBUS_PORT_DEF  "/dev/ttyACM0"
 #define MODBUS_BAUD_DEF  9600
 #define MODBUS_SLAVE_DEF 1
 #define MQTT_BROKER_DEF  "8fe21be0bd034378b2f548b0e16bce62.s1.eu.hivemq.cloud"

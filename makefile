@@ -25,7 +25,8 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/mb_tcp.c \
            $(SRC_DIR)/drive_logger.c \
            $(SRC_DIR)/connection.c \
-           $(SRC_DIR)/http.c 
+           $(SRC_DIR)/https.c \
+            $(SRC_DIR)/rtc.c 
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 
@@ -44,11 +45,11 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
             -lcurl      \
             -ldl        \
             -lz         \
-             -lm
+            -lm
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.0.107
+BOARD_IP   := 192.168.0.106
 BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================

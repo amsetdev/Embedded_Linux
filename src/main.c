@@ -10,10 +10,11 @@
 #include "settings.h"
 #include "data.h"
 #include "mqtt.h"
-#include "http.h"              /* <-- ADDED (1/4): HTTP module include */
+#include "https.h"
 #include "storage.h"
 #include "mb_tcp.h"
 #include "drive_logger.h"
+#include "rtc.h"
 
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
@@ -21,8 +22,26 @@ static int       mb_ok_flag     = 0;
 static int       mb_success_cnt = 0;
 static pthread_mutex_t points_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t mb_thread_id;
+static pthread_t rtc_thread_id;
 
 static void handle_signal(int sig) { (void)sig; running = 0; }
+
+/* Runs rtc_main() once, then retries every 60s on failure or resyncs
+   every 24h on success, until the app shuts down. */
+static void *rtc_sync_thread_func(void *arg)
+{
+    (void)arg;
+    while (running)
+    {
+        int result = rtc_main();
+        printf("[RTC] Sync result: %d\n", result);
+
+        int wait_sec = (result == 0) ? 86400 : 60;
+        for (int t = 0; t < wait_sec && running; t++)
+            sleep(1);
+    }
+    return NULL;
+}
 
 // modbus thread
 static void *mb_thread_func(void *arg)
@@ -52,25 +71,20 @@ static void *mb_thread_func(void *arg)
         /* Build JSON and publish (or store offline) */
         printf("[ MQTT ] bulding json payload ");
         build_payload(payload, sizeof(payload));
-        // mqtt_publish(payload);
         printf("publishing json :");
         mqtt_publish(payload);
 
         /* --- HTTP test GET, POST, PUT, DELETE --- */
+        // http_post("http://192.168.0.106:5000/sensor", payload);
+        // http_get("http://192.168.0.106:5000/sensor");
 
-        //HTTP - public test
-         //http_post_json("https://httpbin.org/post", payload, NULL, 0);
+        // https_post("https://192.168.0.106:5000/sensor", payload);
+        // https_get("https://192.168.0.106:5000/sensor");
 
-        //HTTP - local server test
-        http_post("http://192.168.0.106:5000/sensor", payload);
-        http_get("http://192.168.0.106:5000/sensor");
-
-        //HTTPS local server test
-        http_post("https://192.168.0.106:5000/sensor", payload);
-        http_get("https://192.168.0.106:5000/sensor");
+          https_post("https://httpbin.org/post", payload); 
+         // https_get("https://httpbin.org/get");
 
         /* Wait cfg.interval seconds before next cycle (interruptible) */
-        // time interval for next modbus cycle
         for (int t = 0; t < cfg.interval * 10 && running; t++)
             usleep(100000);
     }
@@ -80,13 +94,11 @@ static void *mb_thread_func(void *arg)
 
 int main(void)
 {
-
-
     signal(SIGINT,  handle_signal);
     signal(SIGTERM, handle_signal);
-    //if user can change software setting then startup can import mqtt,time interval configration form setting.config
-    drive_logger_start(); // logger thrade start 
-   
+
+    drive_logger_start();
+
     static mb_thread_arg_t mb_arg = {
         .slave_ip   = "192.168.0.20",
         .slave_port = 0,   
@@ -104,16 +116,11 @@ int main(void)
     printf("  DE fix   : write() -> tcdrain() -> guard(%dus) -> DE LOW -> read()\n",
            RS485_TX_GUARD_US);
     printf("  Interval : %ds\n\n", cfg.interval);
-    //time interval print 
 
-   
-    if (rs485_gpio_init() < 0) //PE10 pin rs485
+    if (rs485_gpio_init() < 0)
         fprintf(stderr, "[WARN] RS485 GPIO init failed — DE pin uncontrolled\n");
-    rs485_rx();   
-    // low =resive mod
-    //high = trasmit mode 
+    rs485_rx();
 
-   
     if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0) {
         fprintf(stderr, "[ERROR] Cannot open %s\n", cfg.modbus_port);
         rs485_gpio_close();
@@ -121,7 +128,6 @@ int main(void)
     }
     printf("[UART] Open: %s @ %d baud\n", cfg.modbus_port, cfg.modbus_baud);
 
-  
     if (drm_init() == 0) {
         disp_ok = 1;
         fb_fill(COL_BLACK);
@@ -130,7 +136,6 @@ int main(void)
         fprintf(stderr, "[WARN] Display disabled — running headless\n");
     }
 
-   
     if (disp_ok) {
         fb_fill(COL_BLUE);
         fb_rect(0,0,DISP_W,40,COL_HDRBLUE);
@@ -144,35 +149,30 @@ int main(void)
         sleep(2);
     }
 
-    
     touch_init();
-    //kernal interface touch handale by kernal 
-   
+
     if (!parse_csv()) {
         uart_close();
         rs485_gpio_close();
         return 1;
     }
-   
+
     mqtt_init();
-    //mqtt init connect to mqtt
+    http_init();
 
-    http_init();               
-
-  
     pthread_create(&mb_thread_id, NULL, mb_thread_func, NULL);
     printf("[MB] Background thread started\n");
 
+    pthread_t mb_thread_id2;
+    pthread_create(&mb_thread_id2, NULL, mb_thread_func1, &mb_arg);
+    printf("[MB] Background thread started\n");
 
-    //  modbus tcp master 
-     pthread_t mb_thread_id;
-     pthread_create(&mb_thread_id, NULL, mb_thread_func1, &mb_arg);
-     printf("[MB] Background thread started\n");
-    
-    offline_init(); 
-    offline_replay_start(); //thrade start 
+    pthread_create(&rtc_thread_id, NULL, rtc_sync_thread_func, NULL);
+    printf("[RTC] Sync thread started\n");
 
-    //MB loop
+    offline_init();
+    offline_replay_start();
+
     while (running) {
         touch_poll();
 
@@ -187,29 +187,24 @@ int main(void)
             pthread_mutex_unlock(&points_mutex);
             disp_status(cyc, ok, (int)mqtt_connected, succ, data_get_count());
         }
-        usleep(100000);   /* ~10 fps UI refresh */
+        usleep(100000);
     }
 
-    /* 12. Shutdown */
     printf("\n[MAIN] Shutting down...\n");
     pthread_join(mb_thread_id, NULL);
+    pthread_join(mb_thread_id2, NULL);
+    pthread_join(rtc_thread_id, NULL);
 
-    rs485_rx();         
+    rs485_rx();
     rs485_gpio_close();
     uart_close();
 
-    //if (disp_ok) { fb_fill(COL_BLACK); drm_flush(); }
-
     mqtt_cleanup();
-    http_cleanup();           
-    //offline_cleanup();
+    http_cleanup();
     drm_cleanup();
-    pthread_join(mb_thread_id, NULL); 
-    offline_cleanup(); 
+    offline_cleanup();
     connection_stop();
     drive_logger_stop();
     printf("=== STOPPED ===\n");
-    drive_logger_stop();  
-    // cleanup(&ctx);
     return 0;
 }

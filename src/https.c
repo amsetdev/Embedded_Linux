@@ -14,6 +14,10 @@ void http_cleanup(void)
 
 static int perform_request(CURL *curl)
 {
+    /* Fail fast instead of hanging on a bad link */
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+
     CURLcode res = curl_easy_perform(curl);
 
     if(res != CURLE_OK)
@@ -111,3 +115,16 @@ int http_delete(const char *url)
 
     return ret;
 }
+
+/* ============================================================================
+ * https_* — thin aliases for readability at call sites.
+ * curl doesn't distinguish HTTP vs HTTPS as different functions; it's decided
+ * purely by the URL scheme (http:// vs https://) passed to CURLOPT_URL. These
+ * just forward to the same implementation so main.c can call https_get(url)
+ * for a URL that happens to be https:// without any duplicated logic.
+ * ========================================================================== */
+
+int https_get(const char *url)                    { return http_get(url); }
+int https_post(const char *url, const char *json)  { return http_post(url, json); }
+int https_put(const char *url, const char *json)   { return http_put(url, json); }
+int https_delete(const char *url)                  { return http_delete(url); }

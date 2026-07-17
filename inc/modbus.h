@@ -11,6 +11,7 @@ typedef enum { REG_HOLDING, REG_INPUT, REG_COIL, REG_DISCRETE } RegType;
 #define RS485_TX_GUARD_US 1100   /* ~1 byte time at 9600 baud              */
 #define RX_TIMEOUT_MS     1000   /* max wait for slave reply               */
 #define MAX_RETRIES       3      /* per-point retry count                  */
+
 #define POINT_DELAY_US    15000  /* inter-point gap                        */
 
 /* ---- GPIO / UART state ------------------------------------------------- */
