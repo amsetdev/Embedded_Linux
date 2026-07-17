@@ -2,6 +2,28 @@
 
 Modbus RTU/TCP data acquisition and MQTT cloud publishing for STM32MP157F-DK2.
 
+# for RTC test
+m4 status/stop/add firmware/check which firmware/ start m4 >> commands : 
+cat /sys/class/remoteproc/remoteproc0/state
+echo stop > /sys/class/remoteproc/remoteproc0/state
+echo I2C_TwoBoards_ComIT_CM4.elf > /sys/class/remoteproc/remoteproc0/firmware
+cat /sys/class/remoteproc/remoteproc0/firmware
+echo start > /sys/class/remoteproc/remoteproc0/state
+
+// run this to check the RTC registers for heartbeat counter+time+date on the M4 side:
+//in hex: 
+ devmem2 0x38000014 w ; devmem2 0x38000024 w ; devmem2 0x38000028 w
+//In decimal:
+ watch -n 1 '
+hb=$(devmem2 0x38000014 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
+t=$(devmem2 0x38000024 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
+d=$(devmem2 0x38000028 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
+printf "HEARTBEAT : %d\n" "$hb"
+printf "TIME      : %02d:%02d:%02d\n" "$(( (t) >> 16 & 0xFF ))" "$(( (t) >> 8 & 0xFF ))" "$(( (t) & 0xFF ))"
+printf "DATE      : DOW=%d 20%02d-%02d-%02d\n" "$(( (d) >> 24 & 0xFF ))" "$(( (d) >> 16 & 0xFF ))" "$(( (d) >> 8 & 0xFF ))" "$(( (d) & 0xFF ))"
+'
+
+
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
