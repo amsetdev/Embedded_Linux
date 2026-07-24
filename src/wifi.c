@@ -104,58 +104,121 @@ int wifi_load_config(wifi_config_t *cfg)
 
 int wifi_connect(void)
 {
+    //char ssid[64];
+    //char password[64];
+    char ip[32];
+    char cmd[256];
+
+    /* Already connected? */
+    if (wifi_is_connected())
+    {
+        if (wifi_get_ip(ip, sizeof(ip)) == 0)
+        {
+            printf("[WiFi] Already connected (%s)\n", ip);
+            return 0;
+        }
+    }
+
+    /* Load configuration */
     wifi_config_t cfg;
 
-    if (wifi_load_config(&cfg) != 0)
+if (wifi_load_config(&cfg) != 0)
+{
+    printf("[WiFi] Failed to load wifi_config.json\n");
+    return -1;
+}
+
+    printf("[WiFi] Connecting to SSID: %s\n", cfg.ssid);
+
+    /* Create WPA configuration */
+    FILE *fp = fopen("/tmp/wpa.conf", "w");
+    if (!fp)
     {
-        printf("[WiFi] Failed to read config\n");
+        perror("fopen");
         return -1;
     }
 
-    printf("[WiFi] SSID: %s\n", cfg.ssid);
+    fprintf(fp,
+            "ctrl_interface=/var/run/wpa_supplicant\n"
+            "update_config=1\n"
+            "network={\n"
+            "    ssid=\"%s\"\n"
+            "    psk=\"%s\"\n"
+            "}\n",
+            cfg.ssid,
+            cfg.password);
 
-    char cmd[512];
+    fclose(fp);
 
-    snprintf(cmd, sizeof(cmd),
-        "wpa_passphrase \"%s\" \"%s\" > /tmp/wpa.conf",
-        cfg.ssid,
-        cfg.password);
-    system(cmd);
+    /* Stop any old connection */
+    (void)system("killall udhcpc >/dev/null 2>&1");
+    (void)system("killall wpa_supplicant >/dev/null 2>&1");
 
-    system("pkill wpa_supplicant > /dev/null 2>&1");
+    sleep(1);
 
-    system("wpa_supplicant -B -i wlan0 -c /tmp/wpa.conf");
+    /* Bring interface up */
+    (void)system("ip link set wlan0 up");
 
-    sleep(3);
+    /* Start WPA */
+    snprintf(cmd,
+             sizeof(cmd),
+             "wpa_supplicant -B -i wlan0 -c /tmp/wpa.conf");
 
-    system("udhcpc -i wlan0");
+    if (system(cmd) != 0)
+    {
+        printf("[WiFi] Failed to start wpa_supplicant\n");
+        return -1;
+    }
 
     sleep(2);
 
-    return wifi_is_connected();
+    /* Get IP address */
+    (void)system("udhcpc -i wlan0 >/dev/null 2>&1");
+
+    /* Wait up to 15 seconds */
+    for (int i = 0; i < 15; i++)
+    {
+        if (wifi_get_ip(ip, sizeof(ip)) == 0)
+        {
+            printf("[WiFi] Connected. IP = %s\n", ip);
+            return 0;
+        }
+
+        sleep(1);
+    }
+
+    printf("[WiFi] Failed to obtain IP address\n");
+    return -1;
 }
 
 int wifi_is_connected(void)
 {
     FILE *fp;
-    char line[256];
+    char buf[128];
 
-    fp = popen("ip addr show wlan0", "r");
+    /* Check association */
+    fp = popen("iw dev wlan0 link", "r");
     if (!fp)
         return 0;
 
-    while (fgets(line, sizeof(line), fp))
+    int connected = 0;
+
+    while (fgets(buf, sizeof(buf), fp))
     {
-        if (strstr(line, "inet "))
+        if (strstr(buf, "Connected to"))
         {
-            pclose(fp);
-            return 1;
+            connected = 1;
+            break;
         }
     }
 
     pclose(fp);
 
-    return 0;
+    if (!connected)
+        return 0;
+
+    /* Check IP address */
+    return wifi_has_ip();
 }
 
 int wifi_get_ip(char *ip, size_t len)
@@ -190,6 +253,33 @@ int wifi_get_ip(char *ip, size_t len)
 
     memcpy(ip, p, n);
     ip[n] = '\0';
+
+    return 0;
+}
+
+void wifi_disconnect(void)
+{
+    printf("[WIFI] Disconnecting...\n");
+
+    /* Release DHCP lease (ignore if not running) */
+    system("killall udhcpc >/dev/null 2>&1");
+
+    /* Stop WPA Supplicant */
+    system("killall wpa_supplicant >/dev/null 2>&1");
+
+    /* Bring interface down */
+    system("ip link set wlan0 down >/dev/null 2>&1");
+
+    printf("[WIFI] Disconnected\n");
+}
+
+
+int wifi_has_ip(void)
+{
+    char ip[32];
+
+    if (wifi_get_ip(ip, sizeof(ip)) == 0)
+        return 1;
 
     return 0;
 }

@@ -48,7 +48,7 @@ static void use_wifi(void)
     printf("=====================================\n");
     printf("[ NET ] Switching to WiFi\n");
 
-    wifi_init();
+    wifi_connect();
 
     if(wifi_connect()==0)
     {
@@ -144,4 +144,16 @@ int network_is_online(void)
         default:
             return 0;
     }
+}
+
+void network_stop(void)
+{
+    if (current_network == NET_WIFI)
+    {
+        wifi_disconnect();
+    }
+
+    current_network = NET_NONE;
+
+    printf("[NET] Network manager stopped\n");
 }

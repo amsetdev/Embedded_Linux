@@ -15,5 +15,7 @@ int wifi_load_config(wifi_config_t *cfg);
 int wifi_connect(void);
 int wifi_is_connected(void);
 int wifi_get_ip(char *ip, size_t len);
+void wifi_disconnect(void);
+int wifi_has_ip(void);
 
 #endif

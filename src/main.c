@@ -112,11 +112,11 @@ int main(void)
     settings_load();
     printf("[NET] Starting Network Manager...\n");
 
-    network_manager_init();
+    network_init();
 
     printf("[NET] Waiting for Internet...\n");
 
-    while (!network_manager_is_online())
+    while (!network_is_online())
     {
         printf("[NET] Internet not available...\n");
         sleep(1);
@@ -220,7 +220,7 @@ int main(void)
     drm_cleanup();
     offline_cleanup();
     //connection_stop();
-    network_manager_stop();
+    network_stop();
     drive_logger_stop();
     printf("=== STOPPED ===\n");
     return 0;
