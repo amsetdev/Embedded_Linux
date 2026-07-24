@@ -8,6 +8,7 @@
 #define MAX_POINTS  2000
 #define LABEL_MAX   64
 #define UNIT_MAX    16
+//#define CONFIG_FILE "smart_rtu_config.csv"
 #define CONFIG_FILE "registers.csv"
 
 

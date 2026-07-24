@@ -94,16 +94,16 @@ struct drm_mode_map_dumb { uint32_t handle,pad; uint64_t offset; };
 /* ============================================================================
  * CONFIGURATION
  * ========================================================================== */
-#define MODBUS_PORT_DEF     "/dev/ttySTM2"
+#define MODBUS_PORT_DEF     "/dev/ttyACM0"
 #define MODBUS_BAUD_DEF     9600
 #define MODBUS_SLAVE_DEF    1
-#define CONFIG_FILE         "registers.csv"
+#define CONFIG_FILE         "smart_rtu_config.csv"
 #define SETTINGS_FILE       "settings.conf"
-#define MQTT_BROKER_DEF     "8fe21be0bd034378b2f548b0e16bce62.s1.eu.hivemq.cloud"
+#define MQTT_BROKER_DEF     "25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud"
 #define MQTT_PORT_DEF       8883
 #define MQTT_TOPIC          "modbus/data"
-#define MQTT_USERNAME_DEF   "prasad"
-#define MQTT_PASSWORD_DEF   "prasad#12$A"
+#define MQTT_USERNAME_DEF   "Aishwarya"
+#define MQTT_PASSWORD_DEF   "password"
 #define MQTT_STORAGE_DB     "mqtt_storage.db"
 #define INTERVAL_DEF        30
 #define MAX_RETRIES         3

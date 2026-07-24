@@ -15,6 +15,9 @@
 #include "mb_tcp.h"
 #include "drive_logger.h"
 #include "rtc.h"
+#include "network_manager.h"
+#include "ethernet.h"
+#include "wifi.h"
 
 volatile int     running        = 1;
 static int       mb_cycle       = 0;
@@ -107,7 +110,20 @@ int main(void)
 
     printf("load the setting form setting.config");
     settings_load();
-    connection_init();
+    printf("[NET] Starting Network Manager...\n");
+
+    network_manager_init();
+
+    printf("[NET] Waiting for Internet...\n");
+
+    while (!network_manager_is_online())
+    {
+        printf("[NET] Internet not available...\n");
+        sleep(1);
+    }
+
+    printf("[NET] Internet Connected\n");
+    // connection_init();
     printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
     printf("  Port     : %s @ %d  Slave: %d\n",
            cfg.modbus_port, cfg.modbus_baud, cfg.modbus_slave);
@@ -203,7 +219,8 @@ int main(void)
     http_cleanup();
     drm_cleanup();
     offline_cleanup();
-    connection_stop();
+    //connection_stop();
+    network_manager_stop();
     drive_logger_stop();
     printf("=== STOPPED ===\n");
     return 0;

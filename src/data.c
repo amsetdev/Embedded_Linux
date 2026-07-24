@@ -68,8 +68,8 @@ int parse_csv(void)
                 char *s = str_trim(tmp);
                 if      (!strcmp(s,"label"))        cl = c;
                 else if (!strcmp(s,"address"))      ca = c;
-                else if (strstr(s,"register"))      cr = c;
-                else if (!strcmp(s,"unit"))         cu = c;
+                //else if (strstr(s,"register"))      cr = c;
+               // else if (!strcmp(s,"unit"))         cu = c;
             }
             first = 0;
             if (cl < 0 || ca < 0) { fclose(f); return 0; }
