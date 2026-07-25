@@ -22,15 +22,15 @@ static void use_ethernet(void)
 {
     char ip[32];
 
-    if(current_network == NET_ETHERNET)
+    if (current_network == NET_ETHERNET)
         return;
 
     printf("\n");
     printf("=====================================\n");
     printf("[ NET ] Switching to Ethernet\n");
 
-    if(ethernet_get_ip(ip,sizeof(ip))==0)
-        printf("[ NET ] Ethernet IP : %s\n",ip);
+    if (ethernet_get_ip(ip, sizeof(ip)) == 0)
+        printf("[ NET ] Ethernet IP : %s\n", ip);
 
     current_network = NET_ETHERNET;
 }
@@ -41,7 +41,7 @@ static void use_wifi(void)
 {
     char ip[32];
 
-    if(current_network == NET_WIFI)
+    if (current_network == NET_WIFI)
         return;
 
     printf("\n");
@@ -50,10 +50,10 @@ static void use_wifi(void)
 
     wifi_connect();
 
-    if(wifi_connect()==0)
+    if (wifi_connect() == 0)
     {
-        if(wifi_get_ip(ip,sizeof(ip))==0)
-            printf("[ NET ] WiFi IP : %s\n",ip);
+        if (wifi_get_ip(ip, sizeof(ip)) == 0)
+            printf("[ NET ] WiFi IP : %s\n", ip);
 
         current_network = NET_WIFI;
     }
@@ -74,8 +74,8 @@ void network_init(void)
 
     ethernet_init();
 
-    if(ethernet_is_connected() &&
-       ethernet_has_ip())
+    if (ethernet_is_connected() &&
+        ethernet_has_ip())
     {
         use_ethernet();
         return;
@@ -90,10 +90,10 @@ void network_monitor(void)
 {
     /* Ethernet always has priority */
 
-    if(ethernet_is_connected() &&
-       ethernet_has_ip())
+    if (ethernet_is_connected() &&
+        ethernet_has_ip())
     {
-        if(current_network != NET_ETHERNET)
+        if (current_network != NET_ETHERNET)
         {
             printf("[ NET ] Ethernet detected\n");
 
@@ -105,7 +105,7 @@ void network_monitor(void)
 
     /* Ethernet unavailable */
 
-    if(current_network == NET_ETHERNET)
+    if (current_network == NET_ETHERNET)
     {
         printf("[ NET ] Ethernet disconnected\n");
 
@@ -114,9 +114,9 @@ void network_monitor(void)
 
     /* Already on WiFi */
 
-    if(current_network == NET_WIFI)
+    if (current_network == NET_WIFI)
     {
-        if(wifi_is_connected())
+        if (wifi_is_connected())
             return;
 
         printf("[ NET ] WiFi Lost\n");
@@ -133,16 +133,16 @@ void network_monitor(void)
 
 int network_is_online(void)
 {
-    switch(current_network)
+    switch (current_network)
     {
-        case NET_ETHERNET:
-            return ethernet_has_ip();
+    case NET_ETHERNET:
+        return ethernet_has_ip();
 
-        case NET_WIFI:
-            return wifi_is_connected();
+    case NET_WIFI:
+        return wifi_is_connected();
 
-        default:
-            return 0;
+    default:
+        return 0;
     }
 }
 

@@ -23,7 +23,7 @@ int ethernet_is_connected(void)
 
     fp = fopen(CARRIER_FILE, "r");
 
-    if(fp == NULL)
+    if (fp == NULL)
     {
         perror("[ ETH ] carrier");
         return 0;
@@ -46,12 +46,12 @@ int ethernet_has_ip(void)
 
     fp = popen("ip -4 addr show " ETH_INTERFACE, "r");
 
-    if(fp == NULL)
+    if (fp == NULL)
         return 0;
 
-    while(fgets(line, sizeof(line), fp))
+    while (fgets(line, sizeof(line), fp))
     {
-        if(strstr(line, "inet "))
+        if (strstr(line, "inet "))
         {
             pclose(fp);
             return 1;
@@ -73,14 +73,14 @@ int ethernet_get_ip(char *ip, size_t len)
 
     fp = popen("ip -4 addr show " ETH_INTERFACE, "r");
 
-    if(fp == NULL)
+    if (fp == NULL)
         return -1;
 
-    while(fgets(line, sizeof(line), fp))
+    while (fgets(line, sizeof(line), fp))
     {
         char *p = strstr(line, "inet ");
 
-        if(p)
+        if (p)
         {
             sscanf(p, "inet %63[^/]", ip);
 

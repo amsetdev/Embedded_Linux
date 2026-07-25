@@ -251,10 +251,10 @@ cat > ~/edb_c/driver_test/settings.conf << 'EOF'
 modbus_port=/dev/ttyACM0
 modbus_baud=9600
 modbus_slave=1
-mqtt_broker=3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud
+mqtt_broker=25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud
 mqtt_port=8883
-mqtt_user=prasad
-mqtt_pass=prasad#12$A
+mqtt_user=Aishwarya
+mqtt_pass=password
 interval=30
 EOF
 ```
@@ -263,13 +263,13 @@ EOF
 
 ```bash
 cat > ~/edb_c/driver_test/registers.csv << 'EOF'
-label,address,register_type,unit
-Voltage,0,holding,V
-Current,1,holding,A
-Power,2,holding,W
-Frequency,3,holding,Hz
-Temperature,4,holding,C
-Status,5,holding,
+label,address
+Voltage,0
+Current,1
+Power,2
+Frequency,3
+Temperature,4
+Status,5
 EOF
 ```
 
@@ -322,7 +322,7 @@ chmod 666 /dev/ttyACM0
 ```bash
 # Wrong device — not a real tty
 # Use /dev/ttySTM2 not /dev/modbus_uart
-sed -i 's|modbus_port=.*|modbus_port=/dev/ttyACM0|' settings.conf
+sed -i 's|modbus_port=.*|modbus_port=/dev/ttyACM0|' 
 ```
 
 ### Problem: PE10 stuck HIGH (3.3V always)

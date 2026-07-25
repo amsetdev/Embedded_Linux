@@ -19,15 +19,19 @@
 #include "ethernet.h"
 #include "wifi.h"
 
-volatile int     running        = 1;
-static int       mb_cycle       = 0;
-static int       mb_ok_flag     = 0;
-static int       mb_success_cnt = 0;
+volatile int running = 1;
+static int mb_cycle = 0;
+static int mb_ok_flag = 0;
+static int mb_success_cnt = 0;
 static pthread_mutex_t points_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t mb_thread_id;
 static pthread_t rtc_thread_id;
 
-static void handle_signal(int sig) { (void)sig; running = 0; }
+static void handle_signal(int sig)
+{
+    (void)sig;
+    running = 0;
+}
 
 /* Runs rtc_main() once, then retries every 60s on failure or resyncs
    every 24h on success, until the app shuts down. */
@@ -52,19 +56,21 @@ static void *mb_thread_func(void *arg)
     (void)arg;
     static char payload[PAYLOAD_MAX];
 
-    while (running) {
+    while (running)
+    {
         /* Read all configured Modbus points */
         read_all_points();
         printf("[ MODBUS ] modbus address can read form excel and use ");
 
         int s = 0;
         ModbusPoint *pts = data_get_points();
-        int cnt          = data_get_count();
+        int cnt = data_get_count();
         for (int i = 0; i < cnt; i++)
-            if (pts[i].valid) s++;
+            if (pts[i].valid)
+                s++;
 
         pthread_mutex_lock(&points_mutex);
-        mb_ok_flag     = (uart_fd >= 0);    
+        mb_ok_flag = (uart_fd >= 0);
         mb_success_cnt = s;
         mb_cycle++;
         pthread_mutex_unlock(&points_mutex);
@@ -84,8 +90,8 @@ static void *mb_thread_func(void *arg)
         // https_post("https://192.168.0.106:5000/sensor", payload);
         // https_get("https://192.168.0.106:5000/sensor");
 
-          https_post("https://httpbin.org/post", payload); 
-         // https_get("https://httpbin.org/get");
+        https_post("https://httpbin.org/post", payload);
+        // https_get("https://httpbin.org/get");
 
         /* Wait cfg.interval seconds before next cycle (interruptible) */
         for (int t = 0; t < cfg.interval * 10 && running; t++)
@@ -94,18 +100,17 @@ static void *mb_thread_func(void *arg)
     return NULL;
 }
 
-
 int main(void)
 {
-    signal(SIGINT,  handle_signal);
+    signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
     drive_logger_start();
 
     static mb_thread_arg_t mb_arg = {
-        .slave_ip   = "192.168.0.20",
-        .slave_port = 0,   
-        .slave_id   = 0, 
+        .slave_ip = "192.168.0.20",
+        .slave_port = 0,
+        .slave_id = 0,
     };
 
     printf("load the setting form setting.config");
@@ -137,37 +142,43 @@ int main(void)
         fprintf(stderr, "[WARN] RS485 GPIO init failed — DE pin uncontrolled\n");
     rs485_rx();
 
-    if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0) {
+    if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0)
+    {
         fprintf(stderr, "[ERROR] Cannot open %s\n", cfg.modbus_port);
         rs485_gpio_close();
         return 1;
     }
     printf("[UART] Open: %s @ %d baud\n", cfg.modbus_port, cfg.modbus_baud);
 
-    if (drm_init() == 0) {
+    if (drm_init() == 0)
+    {
         disp_ok = 1;
         fb_fill(COL_BLACK);
         drm_flush();
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "[WARN] Display disabled — running headless\n");
     }
 
-    if (disp_ok) {
+    if (disp_ok)
+    {
         fb_fill(COL_BLUE);
-        fb_rect(0,0,DISP_W,40,COL_HDRBLUE);
-        fb_str_c(10,"AMSET",COL_GOLD,COL_HDRBLUE,3);
-        fb_str_c(60,"Modbus RTU Reader",COL_WHITE,COL_BLUE,2);
-        fb_str_c(90,"STM32MP157F-DK2",COL_GRAY,COL_BLUE,1);
-        fb_str_c(110,"HiveMQ Cloud MQTT",COL_GRAY,COL_BLUE,1);
-        fb_hline(20,130,DISP_W-40,COL_GOLD);
-        fb_str_c(140,"Starting...",COL_GOLD,COL_BLUE,1);
+        fb_rect(0, 0, DISP_W, 40, COL_HDRBLUE);
+        fb_str_c(10, "AMSET", COL_GOLD, COL_HDRBLUE, 3);
+        fb_str_c(60, "Modbus RTU Reader", COL_WHITE, COL_BLUE, 2);
+        fb_str_c(90, "STM32MP157F-DK2", COL_GRAY, COL_BLUE, 1);
+        fb_str_c(110, "HiveMQ Cloud MQTT", COL_GRAY, COL_BLUE, 1);
+        fb_hline(20, 130, DISP_W - 40, COL_GOLD);
+        fb_str_c(140, "Starting...", COL_GOLD, COL_BLUE, 1);
         drm_flush();
         sleep(2);
     }
 
     touch_init();
 
-    if (!parse_csv()) {
+    if (!parse_registers())
+    {
         uart_close();
         rs485_gpio_close();
         return 1;
@@ -189,16 +200,20 @@ int main(void)
     offline_init();
     offline_replay_start();
 
-    while (running) {
+    while (running)
+    {
         touch_poll();
 
-        if (cur_screen == SCREEN_SETTINGS) {
+        if (cur_screen == SCREEN_SETTINGS)
+        {
             disp_settings();
-        } else {
+        }
+        else
+        {
             int cyc, ok, succ;
             pthread_mutex_lock(&points_mutex);
-            cyc  = mb_cycle;
-            ok   = mb_ok_flag;
+            cyc = mb_cycle;
+            ok = mb_ok_flag;
             succ = mb_success_cnt;
             pthread_mutex_unlock(&points_mutex);
             disp_status(cyc, ok, (int)mqtt_connected, succ, data_get_count());
@@ -219,7 +234,7 @@ int main(void)
     http_cleanup();
     drm_cleanup();
     offline_cleanup();
-    //connection_stop();
+    // connection_stop();
     network_stop();
     drive_logger_stop();
     printf("=== STOPPED ===\n");

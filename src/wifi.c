@@ -1,111 +1,15 @@
 #include "wifi.h"
+#include "settings.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-static int json_get_string(const char *json,
-                           const char *key,
-                           char *value,
-                           size_t value_size)
-{
-    char pattern[64];
 
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-
-    char *p = strstr(json, pattern);
-    if (!p)
-        return -1;
-
-    p = strchr(p, ':');
-    if (!p)
-        return -1;
-
-    p++;
-
-    while (*p == ' ' || *p == '\t')
-        p++;
-
-    if (*p != '"')
-        return -1;
-
-    p++;
-
-    char *end = strchr(p, '"');
-    if (!end)
-        return -1;
-
-    size_t len = end - p;
-
-    if (len >= value_size)
-        len = value_size - 1;
-
-    memcpy(value, p, len);
-    value[len] = '\0';
-
-    return 0;
-}
-
-int wifi_load_config(wifi_config_t *cfg)
-{
-    FILE *fp;
-    long size;
-    char *json;
-
-    if (!cfg)
-        return -1;
-
-    fp = fopen(WIFI_CONFIG_FILE, "r");
-    if (!fp)
-    {
-        printf("[WiFi] Cannot open %s\n", WIFI_CONFIG_FILE);
-        return -1;
-    }
-
-    fseek(fp, 0, SEEK_END);
-    size = ftell(fp);
-    rewind(fp);
-
-    json = malloc(size + 1);
-    if (!json)
-    {
-        fclose(fp);
-        return -1;
-    }
-
-    fread(json, 1, size, fp);
-    json[size] = '\0';
-
-    fclose(fp);
-
-    memset(cfg, 0, sizeof(*cfg));
-
-    if (json_get_string(json, "ssid",
-                        cfg->ssid,
-                        sizeof(cfg->ssid)) != 0)
-    {
-        free(json);
-        return -1;
-    }
-
-    if (json_get_string(json, "password",
-                        cfg->password,
-                        sizeof(cfg->password)) != 0)
-    {
-        free(json);
-        return -1;
-    }
-
-    free(json);
-
-    return 0;
-}
 
 int wifi_connect(void)
 {
-    //char ssid[64];
-    //char password[64];
     char ip[32];
     char cmd[256];
 
@@ -119,18 +23,15 @@ int wifi_connect(void)
         }
     }
 
-    /* Load configuration */
-    wifi_config_t cfg;
+    /* Validate configuration */
+    if (strlen(cfg.wifi_ssid) == 0)
+    {
+        printf("[WiFi] SSID not configured\n");
+        return -1;
+    }
 
-if (wifi_load_config(&cfg) != 0)
-{
-    printf("[WiFi] Failed to load wifi_config.json\n");
-    return -1;
-}
+    printf("[WiFi] Connecting to SSID: %s\n", cfg.wifi_ssid);
 
-    printf("[WiFi] Connecting to SSID: %s\n", cfg.ssid);
-
-    /* Create WPA configuration */
     FILE *fp = fopen("/tmp/wpa.conf", "w");
     if (!fp)
     {
@@ -145,21 +46,19 @@ if (wifi_load_config(&cfg) != 0)
             "    ssid=\"%s\"\n"
             "    psk=\"%s\"\n"
             "}\n",
-            cfg.ssid,
-            cfg.password);
+            cfg.wifi_ssid,
+            cfg.wifi_password);
 
     fclose(fp);
 
-    /* Stop any old connection */
-    (void)system("killall udhcpc >/dev/null 2>&1");
-    (void)system("killall wpa_supplicant >/dev/null 2>&1");
+    /* Stop previous WiFi connection */
+    system("killall udhcpc >/dev/null 2>&1");
+    system("killall wpa_supplicant >/dev/null 2>&1");
 
     sleep(1);
 
-    /* Bring interface up */
-    (void)system("ip link set wlan0 up");
+    system("ip link set wlan0 up");
 
-    /* Start WPA */
     snprintf(cmd,
              sizeof(cmd),
              "wpa_supplicant -B -i wlan0 -c /tmp/wpa.conf");
@@ -172,10 +71,8 @@ if (wifi_load_config(&cfg) != 0)
 
     sleep(2);
 
-    /* Get IP address */
-    (void)system("udhcpc -i wlan0 >/dev/null 2>&1");
+    system("udhcpc -i wlan0 >/dev/null 2>&1");
 
-    /* Wait up to 15 seconds */
     for (int i = 0; i < 15; i++)
     {
         if (wifi_get_ip(ip, sizeof(ip)) == 0)
@@ -272,7 +169,6 @@ void wifi_disconnect(void)
 
     printf("[WIFI] Disconnected\n");
 }
-
 
 int wifi_has_ip(void)
 {

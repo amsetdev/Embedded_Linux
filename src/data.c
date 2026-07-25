@@ -1,148 +1,221 @@
+/**
+ * @file data.c
+ * @brief Loads Modbus register configuration from smart_rtu_config.json
+ *        and performs Modbus register polling.
+ */
+
 #include "data.h"
 #include "modbus.h"
 #include "settings.h"
+#include "json.h"
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-#include <ctype.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-
 static ModbusPoint points[MAX_POINTS];
-static int         point_count = 0;
+static int point_count = 0;
 
-ModbusPoint *data_get_points(void) { return points; }
-int          data_get_count(void)  { return point_count; }
+/*-----------------------------------------------------------*/
+/* Public API                                                */
+/*-----------------------------------------------------------*/
 
-
-static char *str_trim(char *s)
+ModbusPoint *data_get_points(void)
 {
-    while (isspace((unsigned char)*s)) s++;
-    char *e = s + strlen(s) - 1;
-    while (e > s && isspace((unsigned char)*e)) *e-- = '\0';
-    return s;
+    return points;
 }
 
-static int split_csv(char *line, char *cols[], int max)
+int data_get_count(void)
 {
-    int n = 0; char *p = line;
-    while (n < max) {
-        cols[n++] = p;
-        char *c = strchr(p, ',');
-        if (!c) break;
-        *c = '\0'; p = c+1;
-    }
-    return n;
+    return point_count;
 }
 
-int parse_csv(void)
+/*-----------------------------------------------------------*/
+/**
+ * @brief Parse registers[] array from smart_rtu_config.json
+ *
+ * Example:
+ * "registers":
+ * [
+ *   {
+ *      "label":"REG1",
+ *      "address":0
+ *   },
+ *   {
+ *      "label":"REG2",
+ *      "address":1
+ *   }
+ * ]
+ *
+ * @return 1 Success
+ * @return 0 Failure
+ */
+/*-----------------------------------------------------------*/
+
+int parse_registers(void)
 {
-    FILE *f = fopen(CONFIG_FILE, "r");
-    if (!f) {
-        printf("[ DATA ] '%s' not found — using 20 sample points\n", CONFIG_FILE);
-        for (int i = 0; i < 20; i++) {
-            snprintf(points[i].label, LABEL_MAX, "Point_%d", i+1);
-            points[i].address   = 400 + i;
-            points[i].reg_type  = REG_HOLDING;
-            points[i].data_type = 'w';
-            points[i].unit[0]   = '\0';
-            points[i].valid     = 0;
-        }
-        point_count = 20;
-        return 1;
+    char *json = read_file(SETTINGS_FILE);
+
+if (json == NULL)
+{
+    return -1;
+}
+
+    char *p = strstr(json, "\"registers\"");
+
+    if (p == NULL)
+    {
+        free(json);
+        return 0;
     }
 
-    char line[512];
-    int first=1, idx=0, cl=-1, ca=-1, cr=-1, cu=-1;
-    while (fgets(line, sizeof(line), f) && idx < MAX_POINTS) {
-        line[strcspn(line, "\r\n")] = '\0';
-        if (!strlen(line)) continue;
-        char *cols[16]; int nc = split_csv(line, cols, 16);
+    p = strchr(p, '[');
 
-        if (first) {
-            for (int c=0; c<nc; c++) {
-                char tmp[64]; strncpy(tmp, cols[c], 63);
-                for (int i=0; tmp[i]; i++) tmp[i] = tolower((unsigned char)tmp[i]);
-                char *s = str_trim(tmp);
-                if      (!strcmp(s,"label"))        cl = c;
-                else if (!strcmp(s,"address"))      ca = c;
-                //else if (strstr(s,"register"))      cr = c;
-               // else if (!strcmp(s,"unit"))         cu = c;
-            }
-            first = 0;
-            if (cl < 0 || ca < 0) { fclose(f); return 0; }
+    if (p == NULL)
+    {
+        free(json);
+        return 0;
+    }
+
+    p++;
+
+    point_count = 0;
+
+    while (*p && *p != ']')
+    {
+        if (*p != '{')
+        {
+            p++;
             continue;
         }
 
-        if (nc <= cl || nc <= ca) continue;
-        char *lbl = str_trim(cols[cl]); if (!strlen(lbl)) continue;
-        strncpy(points[idx].label, lbl, LABEL_MAX-1);
+        if (point_count >= MAX_POINTS)
+            break;
 
-        char ab[32]; strncpy(ab, str_trim(cols[ca]), 31);
-        char *sp = strchr(ab,' '); if (sp) *sp = '\0';
-        points[idx].address  = atoi(ab);
-        points[idx].reg_type = REG_HOLDING;
+        json_get_string_from(
+                p,
+                "label",
+                points[point_count].label,
+                sizeof(points[point_count].label));
 
-        if (cr >= 0 && cr < nc) {
-            char rt[32]; strncpy(rt, cols[cr], 31);
-            for (int i=0; rt[i]; i++) rt[i] = tolower((unsigned char)rt[i]);
-            if      (strstr(rt,"coil"))     points[idx].reg_type = REG_COIL;
-            else if (strstr(rt,"discrete")) points[idx].reg_type = REG_DISCRETE;
-            else if (strstr(rt,"input"))    points[idx].reg_type = REG_INPUT;
-        }
+        json_get_int_from(
+                p,
+                "address",
+                &points[point_count].address);
 
-        points[idx].data_type = 'w';
-        points[idx].unit[0]   = '\0';
-        if (cu >= 0 && cu < nc)
-            strncpy(points[idx].unit, str_trim(cols[cu]), UNIT_MAX-1);
+        points[point_count].reg_type = REG_HOLDING;
+        points[point_count].data_type = 'w';
+        points[point_count].unit[0] = '\0';
+        points[point_count].valid = 0;
+        points[point_count].value = 0;
 
-        points[idx].valid = 0;
-        idx++;
+        point_count++;
+
+        p = strchr(p, '}');
+
+        if (p == NULL)
+            break;
+
+        p++;
     }
-    fclose(f);
-    point_count = idx;
-    printf("[ DATA ] Loaded %d points from %s\n", point_count, CONFIG_FILE);
+
+    free(json);
+
+    printf("[DATA] Loaded %d registers\n", point_count);
+
     return 1;
 }
+
+/*-----------------------------------------------------------*/
+/**
+ * @brief Read one Modbus point.
+ *
+ * @param pt Pointer to ModbusPoint
+ *
+ * @return 1 Success
+ * @return 0 Failure
+ */
+/*-----------------------------------------------------------*/
 
 int read_point(ModbusPoint *pt)
 {
     uint8_t fc;
-    switch (pt->reg_type) {
-        case REG_COIL:     fc = 0x01; break;
-        case REG_DISCRETE: fc = 0x02; break;
-        case REG_INPUT:    fc = 0x04; break;
-        default:           fc = 0x03; break;
+
+    switch (pt->reg_type)
+    {
+        case REG_COIL:
+            fc = 0x01;
+            break;
+
+        case REG_DISCRETE:
+            fc = 0x02;
+            break;
+
+        case REG_INPUT:
+            fc = 0x04;
+            break;
+
+        default:
+            fc = 0x03;
+            break;
     }
 
-    for (int retry = 0; retry < MAX_RETRIES; retry++) {
-        uint16_t val = 0;
-        if (mb_transaction((uint8_t)cfg.modbus_slave, fc,
-                           (uint16_t)pt->address, &val)) {
-            pt->value = (int)val;
+    for (int retry = 0; retry < MAX_RETRIES; retry++)
+    {
+        uint16_t value = 0;
+
+        if (mb_transaction((uint8_t)cfg.modbus_slave,
+                           fc,
+                           (uint16_t)pt->address,
+                           &value))
+        {
+            pt->value = value;
             pt->valid = 1;
             return 1;
         }
-        printf("[ DATA ] Point '%s' addr %d retry %d\n",
-               pt->label, pt->address, retry + 1);
+
+        printf("[DATA] Retry %d : %s (%d)\n",
+               retry + 1,
+               pt->label,
+               pt->address);
+
         usleep(50000);
     }
+
     pt->valid = 0;
+
     return 0;
 }
+
+/*-----------------------------------------------------------*/
+/**
+ * @brief Read every configured Modbus register.
+ */
+/*-----------------------------------------------------------*/
 
 void read_all_points(void)
 {
     extern volatile int running;
-    int s = 0, f = 0;
+
+    int success = 0;
+    int failed = 0;
+
     time_t start = time(NULL);
-    for (int i = 0; i < point_count && running; i++) {
-        if (read_point(&points[i])) s++; else f++;
+
+    for (int i = 0; i < point_count && running; i++)
+    {
+        if (read_point(&points[i]))
+            success++;
+        else
+            failed++;
+
         usleep(POINT_DELAY_US);
     }
-    printf("[ DATA ] READ DONE — ok:%d fail:%d time:%ds\n",
-           s, f, (int)(time(NULL) - start));
-}
 
+    printf("[DATA] READ DONE : OK=%d FAIL=%d TIME=%lds\n",
+           success,
+           failed,
+           (long)(time(NULL) - start));
+}

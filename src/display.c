@@ -424,7 +424,7 @@ void disp_settings(void)
     fb_str_c(sy,"  settings.conf",COL_ORANGE,COL_BLUE,1);
 
     if (ui_button(40,DISP_H-50,160,38,"  SAVE  ",COL_GREEN,COL_WHITE)) {
-        settings_save();
+       // settings_save();
         printf("[Settings] Saved\n");
         cur_screen = SCREEN_STATUS;
     }

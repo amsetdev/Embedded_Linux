@@ -1,45 +1,129 @@
+/**
+ * @file data.h
+ * @brief Modbus register configuration and data access.
+ *
+ * This module loads the register list from
+ * smart_rtu_config.json and provides APIs
+ * for reading Modbus registers.
+ */
+
 #ifndef DATA_H
 #define DATA_H
 
+#include "modbus.h"
+#include "json.h"
 
-#include "modbus.h" 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+/*-----------------------------------------------------------
+ * Configuration
+ *----------------------------------------------------------*/
 
-#define MAX_POINTS  2000
-#define LABEL_MAX   64
-#define UNIT_MAX    16
-//#define CONFIG_FILE "smart_rtu_config.csv"
-#define CONFIG_FILE "registers.csv"
+/**
+ * @brief Maximum number of Modbus registers supported.
+ */
+#define MAX_POINTS     2000
 
+/**
+ * @brief Maximum register label length.
+ */
+#define LABEL_MAX      64
 
-typedef struct {
-    char    label[LABEL_MAX];
-    int     address;
+/**
+ * @brief Maximum engineering unit string length.
+ */
+#define UNIT_MAX       16
+
+/**
+ * @brief Smart RTU configuration JSON.
+ */
+#define CONFIG_FILE    "smart_rtu_config.json"
+
+/*-----------------------------------------------------------
+ * Modbus Register
+ *----------------------------------------------------------*/
+
+/**
+ * @brief Represents one Modbus register configured
+ *        in smart_rtu_config.json.
+ */
+typedef struct
+{
+    /** Register name */
+    char label[LABEL_MAX];
+
+    /** Modbus register address */
+    int address;
+
+    /** Register type */
     RegType reg_type;
-    char    data_type;
-    char    unit[UNIT_MAX];
-    int     value;
-    int     valid;
+
+    /** Data type
+     *  'w' = uint16
+     *  'd' = float
+     *  etc.
+     */
+    char data_type;
+
+    /** Engineering unit */
+    char unit[UNIT_MAX];
+
+    /** Latest value */
+    int value;
+
+    /** Valid flag */
+    int valid;
+
 } ModbusPoint;
 
+/*-----------------------------------------------------------
+ * Public API
+ *----------------------------------------------------------*/
 
+/**
+ * @brief Parse the registers[] array from
+ *        smart_rtu_config.json.
+ *
+ * Populates the internal ModbusPoint table.
+ *
+ * @return 1 Success
+ * @return 0 Failure
+ */
+int parse_registers(void);
 
-/** Parse registers.csv and populate the internal points array.
- *  Falls back to 20 synthetic sample points if the file is missing.
- *  Returns 1 on success, 0 on fatal parse error. */
-int parse_csv(void);
-
-/** Access the live points array (read-only from other modules). */
+/**
+ * @brief Get pointer to configured register list.
+ *
+ * @return Pointer to ModbusPoint array.
+ */
 ModbusPoint *data_get_points(void);
 
-/** Number of configured points. */
+/**
+ * @brief Get number of configured registers.
+ *
+ * @return Register count.
+ */
 int data_get_count(void);
 
-/** Read a single point via Modbus RTU (with retries).
- *  Returns 1 on success and updates pt->value / pt->valid. */
+/**
+ * @brief Read one Modbus register.
+ *
+ * @param pt Pointer to register.
+ *
+ * @return 1 Success
+ * @return 0 Failure
+ */
 int read_point(ModbusPoint *pt);
 
-/** Read ALL configured points sequentially (blocking). */
+/**
+ * @brief Read all configured registers.
+ */
 void read_all_points(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* DATA_H */
