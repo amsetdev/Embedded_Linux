@@ -55,7 +55,7 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.137.40
+BOARD_IP   := 192.168.137.113
 BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================

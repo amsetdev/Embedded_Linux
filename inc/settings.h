@@ -24,7 +24,7 @@ extern "C" {
  * Default Modbus settings
  *----------------------------------------------------------*/
 
-#define MODBUS_PORT_DEF        "/dev/ttyACM0"
+#define MODBUS_PORT_DEF        "/dev/ttySTM2"
 #define MODBUS_BAUD_DEF        9600
 #define MODBUS_SLAVE_DEF       1
 #define MODBUS_PARITY_DEF      "None"
@@ -50,8 +50,8 @@ extern "C" {
  *----------------------------------------------------------*/
 
 #define WIFI_ENABLE_DEF        1
-#define WIFI_SSID_DEF          "redmi"
-#define WIFI_PASSWORD_DEF      "1234567890"
+#define WIFI_SSID_DEF          "Amset"
+#define WIFI_PASSWORD_DEF      "Amset@123"
 #define WIFI_COUNTRY_DEF       "IN"
 
 /*-----------------------------------------------------------

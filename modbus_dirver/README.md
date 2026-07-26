@@ -248,7 +248,7 @@ gcc -O2 -o main_display main_display.c \
 
 ```bash
 cat > ~/edb_c/driver_test/settings.conf << 'EOF'
-modbus_port=/dev/ttyACM0
+modbus_port=/dev/ttySTM2
 modbus_baud=9600
 modbus_slave=1
 mqtt_broker=25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud
@@ -283,7 +283,7 @@ cd ~/edb_c/driver_test
 Expected output:
 ```
 === MODBUS RTU READER — STM32MP157F-DK2 ===
-  Port  : /dev/ttyACM0 @ 9600  Slave: 1
+  Port  : /dev/ttySTM2 @ 9600  Slave: 1
   RS485 : DE=PE10 (gpiochip4 line 10) manual control
 [RS485] PE10 GPIO init OK — DE pin ready
 [INFO] Modbus connected — PE10 DE controlled manually
@@ -296,14 +296,14 @@ Expected output:
 
 ## Troubleshooting
 
-### Problem: `/dev/ttyACM0` not appearing after reboot
+### Problem: `/dev/ttySTM2` not appearing after reboot
 ```bash
 dmesg | grep "40018000"
 # If no output → DTB not loaded correctly
 # Fix: repeat Step 7 and Step 8
 ```
 
-### Problem: `stty: /dev/ttyACM0: No such device or address`
+### Problem: `stty: /dev/ttySTM2: No such device or address`
 ```bash
 # Device node exists but kernel didn't register it
 # Check DTB status
@@ -313,16 +313,16 @@ cat /proc/device-tree/soc/serial@40018000/status
 
 ### Problem: `mknod: /dev/ttySTM2: File exists` but it's a regular file
 ```bash
-rm /dev/ttyACM0
-mknod /dev/ttyACM0 c 204 66
-chmod 666 /dev/ttyACM0
+rm /dev/ttySTM2
+mknod /dev/ttySTM2 c 204 66
+chmod 666 /dev/ttySTM2
 ```
 
 ### Problem: `modbus_connect: Inappropriate ioctl for device`
 ```bash
 # Wrong device — not a real tty
 # Use /dev/ttySTM2 not /dev/modbus_uart
-sed -i 's|modbus_port=.*|modbus_port=/dev/ttyACM0|' 
+sed -i 's|modbus_port=.*|modbus_port=/dev/ttySTM2|' 
 ```
 
 ### Problem: PE10 stuck HIGH (3.3V always)
@@ -390,10 +390,10 @@ cat /proc/device-tree/soc/serial@40018000/status
 dmesg | grep "40018000"
 
 # Create device node
-mknod /dev/ttyACM0 c 204 66 && chmod 666 /dev/ttySTM2
+mknod /dev/ttySTM2 c 204 66 && chmod 666 /dev/ttySTM2
 
 # Test UART7 baud rate
-stty -F /dev/ttyACM0 9600
+stty -F /dev/ttySTM2 9600
 
 # Check PE10 state (0=RX mode, 1=TX mode)
 gpioget gpiochip4 10

@@ -110,7 +110,7 @@ struct drm_mode_map_dumb
 /* ============================================================================
  * CONFIGURATION
  * ========================================================================== */
-#define MODBUS_PORT_DEF "/dev/ttyACM0"
+#define MODBUS_PORT_DEF "/dev/ttySTM2"
 #define MODBUS_BAUD_DEF 9600
 #define MODBUS_SLAVE_DEF 1
 #define CONFIG_FILE "smart_rtu_config.json"
