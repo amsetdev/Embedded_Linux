@@ -17,6 +17,28 @@
 #include <unistd.h>
 
 /**
+ * @brief Executes a shell command.
+ *
+ * @param cmd Shell command to execute.
+ *
+ * @return
+ * - 0 if the command executed successfully.
+ * - -1 if the shell could not be started or the command failed.
+ */
+static int run_command(const char *cmd)
+{
+    int ret = system(cmd);
+
+    if (ret == -1)
+    {
+        perror("system");
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
  * @brief Connects to the configured Wi-Fi network.
  *
  * Creates a temporary wpa_supplicant configuration file using the
@@ -70,19 +92,23 @@ int wifi_connect(void)
 
     fclose(fp);
 
-    /* Stop previous Wi-Fi services */
-    system("killall udhcpc >/dev/null 2>&1");
-    system("killall wpa_supplicant >/dev/null 2>&1");
+    /* Stop any existing Wi-Fi services */
+    run_command("killall udhcpc >/dev/null 2>&1");
+    run_command("killall wpa_supplicant >/dev/null 2>&1");
 
     sleep(1);
 
-    system("ip link set wlan0 up");
+    if (run_command("ip link set wlan0 up") != 0)
+    {
+        printf("[WiFi] Failed to enable wlan0\n");
+        return -1;
+    }
 
     snprintf(cmd,
              sizeof(cmd),
              "wpa_supplicant -B -i wlan0 -c /tmp/wpa.conf");
 
-    if (system(cmd) != 0)
+    if (run_command(cmd) != 0)
     {
         printf("[WiFi] Failed to start wpa_supplicant\n");
         return -1;
@@ -90,7 +116,11 @@ int wifi_connect(void)
 
     sleep(2);
 
-    system("udhcpc -i wlan0 >/dev/null 2>&1");
+    if (run_command("udhcpc -i wlan0 >/dev/null 2>&1") != 0)
+    {
+        printf("[WiFi] Failed to start DHCP client\n");
+        return -1;
+    }
 
     for (int i = 0; i < 15; i++)
     {
@@ -123,7 +153,6 @@ int wifi_is_connected(void)
     FILE *fp;
     char buf[128];
 
-    /* Check wireless association */
     fp = popen("iw dev wlan0 link", "r");
     if (!fp)
         return 0;
@@ -150,12 +179,12 @@ int wifi_is_connected(void)
 /**
  * @brief Retrieves the IPv4 address assigned to the Wi-Fi interface.
  *
- * @param ip Buffer to receive the IP address string.
+ * @param ip Buffer to receive the IP address.
  * @param len Size of the destination buffer.
  *
  * @return
  * - 0 on success.
- * - -1 if no IP address is available.
+ * - -1 if no IP address is assigned.
  */
 int wifi_get_ip(char *ip, size_t len)
 {
@@ -204,20 +233,15 @@ void wifi_disconnect(void)
 {
     printf("[WiFi] Disconnecting...\n");
 
-    /* Stop DHCP client */
-    system("killall udhcpc >/dev/null 2>&1");
-
-    /* Stop WPA supplicant */
-    system("killall wpa_supplicant >/dev/null 2>&1");
-
-    /* Disable interface */
-    system("ip link set wlan0 down >/dev/null 2>&1");
+    run_command("killall udhcpc >/dev/null 2>&1");
+    run_command("killall wpa_supplicant >/dev/null 2>&1");
+    run_command("ip link set wlan0 down >/dev/null 2>&1");
 
     printf("[WiFi] Disconnected\n");
 }
 
 /**
- * @brief Checks whether the Wi-Fi interface has an IP address.
+ * @brief Checks whether the Wi-Fi interface has an assigned IP address.
  *
  * @return
  * - 1 if an IP address is assigned.
@@ -227,8 +251,5 @@ int wifi_has_ip(void)
 {
     char ip[32];
 
-    if (wifi_get_ip(ip, sizeof(ip)) == 0)
-        return 1;
-
-    return 0;
+    return (wifi_get_ip(ip, sizeof(ip)) == 0);
 }

@@ -61,7 +61,7 @@ extern "C" {
 /**
  * @brief MQTT broker hostname.
  */
-#define MQTT_BROKER                 "xx2sss3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud"
+#define MQTT_BROKER                  "25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud"
 
 /**
  * @brief MQTT broker port.
@@ -76,12 +76,12 @@ extern "C" {
 /**
  * @brief MQTT username.
  */
-#define MQTT_USERNAME               "prasad"
+#define MQTT_USERNAME               "Aishwarya"
 
 /**
  * @brief MQTT password.
  */
-#define MQTT_PASSWORD               "prasad#12$A"
+#define MQTT_PASSWORD               "password"
 
 /**
  * @brief MQTT client identifier.

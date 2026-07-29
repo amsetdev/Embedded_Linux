@@ -46,18 +46,17 @@ int ethernet_init(void)
  */
 int ethernet_is_connected(void)
 {
-    FILE *fp;
+    FILE *fp = fopen("/sys/class/net/end0/carrier", "r");
+    if (!fp)
+        return 0;
+
     int carrier = 0;
 
-    fp = fopen(CARRIER_FILE, "r");
-
-    if (fp == NULL)
+    if (fscanf(fp, "%d", &carrier) != 1)
     {
-        perror("[ ETH ] carrier");
+        fclose(fp);
         return 0;
     }
-
-    fscanf(fp, "%d", &carrier);
 
     fclose(fp);
 

@@ -1,6 +1,6 @@
 /**
  * @file main.c
- * @brief Smart RTU main application.
+ * @brief main application.
  *
  * This application performs the following tasks:
  * - Initializes network connectivity (Ethernet/Wi-Fi).
