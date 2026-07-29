@@ -58,10 +58,10 @@ int parse_registers(void)
 {
     char *json = read_file(SETTINGS_FILE);
 
-if (json == NULL)
-{
-    return -1;
-}
+    if (json == NULL)
+    {
+        return -1;
+    }
 
     char *p = strstr(json, "\"registers\"");
 
@@ -95,15 +95,15 @@ if (json == NULL)
             break;
 
         json_get_string_from(
-                p,
-                "label",
-                points[point_count].label,
-                sizeof(points[point_count].label));
+            p,
+            "label",
+            points[point_count].label,
+            sizeof(points[point_count].label));
 
         json_get_int_from(
-                p,
-                "address",
-                &points[point_count].address);
+            p,
+            "address",
+            &points[point_count].address);
 
         points[point_count].reg_type = REG_HOLDING;
         points[point_count].data_type = 'w';
@@ -145,21 +145,21 @@ int read_point(ModbusPoint *pt)
 
     switch (pt->reg_type)
     {
-        case REG_COIL:
-            fc = 0x01;
-            break;
+    case REG_COIL:
+        fc = 0x01;
+        break;
 
-        case REG_DISCRETE:
-            fc = 0x02;
-            break;
+    case REG_DISCRETE:
+        fc = 0x02;
+        break;
 
-        case REG_INPUT:
-            fc = 0x04;
-            break;
+    case REG_INPUT:
+        fc = 0x04;
+        break;
 
-        default:
-            fc = 0x03;
-            break;
+    default:
+        fc = 0x03;
+        break;
     }
 
     for (int retry = 0; retry < MAX_RETRIES; retry++)

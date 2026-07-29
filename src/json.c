@@ -4,6 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Reads the contents of a file into a dynamically allocated buffer.
+ *
+ * Opens the specified file, reads its entire contents, and returns
+ * a null-terminated string containing the file data.
+ *
+ * @param filename Path to the file to read.
+ *
+ * @return Pointer to a dynamically allocated buffer containing the file
+ *         contents on success, or NULL on failure.
+ *
+ * @note The caller is responsible for freeing the returned buffer using free().
+ */
 char *read_file(const char *filename)
 {
     FILE *fp = fopen(filename, "r");
@@ -35,6 +48,19 @@ char *read_file(const char *filename)
     return buffer;
 }
 
+/**
+ * @brief Retrieves a string value associated with a key from a JSON string.
+ *
+ * Searches for the specified key in the JSON text and copies its
+ * string value into the provided buffer.
+ *
+ * @param json Pointer to the JSON string.
+ * @param key JSON key to search for.
+ * @param value Buffer to store the extracted string.
+ * @param value_size Size of the destination buffer in bytes.
+ *
+ * @return 0 on success, -1 if the key or value is not found or invalid.
+ */
 int json_get_string(const char *json,
                     const char *key,
                     char *value,
@@ -84,6 +110,18 @@ int json_get_string(const char *json,
     return 0;
 }
 
+/**
+ * @brief Retrieves an integer value associated with a key from a JSON string.
+ *
+ * Searches for the specified key in the JSON text and converts the
+ * associated value to an integer.
+ *
+ * @param json Pointer to the JSON string.
+ * @param key JSON key to search for.
+ * @param value Pointer to store the extracted integer.
+ *
+ * @return 0 on success, -1 if the key is not found or invalid.
+ */
 int json_get_int(const char *json,
                  const char *key,
                  int *value)
@@ -115,6 +153,19 @@ int json_get_int(const char *json,
     return 0;
 }
 
+/**
+ * @brief Retrieves a string value from a JSON object.
+ *
+ * Wrapper around json_get_string() for extracting a string value
+ * from a specific JSON object.
+ *
+ * @param object Pointer to the JSON object.
+ * @param key JSON key to search for.
+ * @param value Buffer to store the extracted string.
+ * @param value_size Size of the destination buffer in bytes.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int json_get_string_from(const char *object,
                          const char *key,
                          char *value,
@@ -126,6 +177,18 @@ int json_get_string_from(const char *object,
                            value_size);
 }
 
+/**
+ * @brief Retrieves an integer value from a JSON object.
+ *
+ * Wrapper around json_get_int() for extracting an integer value
+ * from a specific JSON object.
+ *
+ * @param object Pointer to the JSON object.
+ * @param key JSON key to search for.
+ * @param value Pointer to store the extracted integer.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int json_get_int_from(const char *object,
                       const char *key,
                       int *value)

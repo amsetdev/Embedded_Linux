@@ -1,3 +1,13 @@
+/**
+ * @file wifi.c
+ * @brief Wi-Fi connection management.
+ *
+ * This module manages the Wi-Fi interface using wpa_supplicant and
+ * udhcpc. It provides functions to connect to a configured wireless
+ * network, monitor connection status, obtain the assigned IP address,
+ * and disconnect the interface.
+ */
+
 #include "wifi.h"
 #include "settings.h"
 
@@ -6,14 +16,23 @@
 #include <string.h>
 #include <unistd.h>
 
-
-
+/**
+ * @brief Connects to the configured Wi-Fi network.
+ *
+ * Creates a temporary wpa_supplicant configuration file using the
+ * configured SSID and password, starts wpa_supplicant, obtains an
+ * IP address using DHCP, and waits for the connection to complete.
+ *
+ * @return
+ * - 0 on successful connection.
+ * - -1 on failure.
+ */
 int wifi_connect(void)
 {
     char ip[32];
     char cmd[256];
 
-    /* Already connected? */
+    /* Already connected */
     if (wifi_is_connected())
     {
         if (wifi_get_ip(ip, sizeof(ip)) == 0)
@@ -51,7 +70,7 @@ int wifi_connect(void)
 
     fclose(fp);
 
-    /* Stop previous WiFi connection */
+    /* Stop previous Wi-Fi services */
     system("killall udhcpc >/dev/null 2>&1");
     system("killall wpa_supplicant >/dev/null 2>&1");
 
@@ -85,15 +104,26 @@ int wifi_connect(void)
     }
 
     printf("[WiFi] Failed to obtain IP address\n");
+
     return -1;
 }
 
+/**
+ * @brief Checks whether the Wi-Fi interface is connected.
+ *
+ * Verifies both the wireless association status and whether an IP
+ * address has been assigned.
+ *
+ * @return
+ * - 1 if connected.
+ * - 0 otherwise.
+ */
 int wifi_is_connected(void)
 {
     FILE *fp;
     char buf[128];
 
-    /* Check association */
+    /* Check wireless association */
     fp = popen("iw dev wlan0 link", "r");
     if (!fp)
         return 0;
@@ -114,10 +144,19 @@ int wifi_is_connected(void)
     if (!connected)
         return 0;
 
-    /* Check IP address */
     return wifi_has_ip();
 }
 
+/**
+ * @brief Retrieves the IPv4 address assigned to the Wi-Fi interface.
+ *
+ * @param ip Buffer to receive the IP address string.
+ * @param len Size of the destination buffer.
+ *
+ * @return
+ * - 0 on success.
+ * - -1 if no IP address is available.
+ */
 int wifi_get_ip(char *ip, size_t len)
 {
     FILE *fp = popen("ip -4 addr show wlan0 | grep inet", "r");
@@ -145,6 +184,7 @@ int wifi_get_ip(char *ip, size_t len)
         return -1;
 
     size_t n = slash - p;
+
     if (n >= len)
         n = len - 1;
 
@@ -154,22 +194,35 @@ int wifi_get_ip(char *ip, size_t len)
     return 0;
 }
 
+/**
+ * @brief Disconnects the Wi-Fi interface.
+ *
+ * Stops the DHCP client, terminates wpa_supplicant, and brings the
+ * wireless interface down.
+ */
 void wifi_disconnect(void)
 {
-    printf("[WIFI] Disconnecting...\n");
+    printf("[WiFi] Disconnecting...\n");
 
-    /* Release DHCP lease (ignore if not running) */
+    /* Stop DHCP client */
     system("killall udhcpc >/dev/null 2>&1");
 
-    /* Stop WPA Supplicant */
+    /* Stop WPA supplicant */
     system("killall wpa_supplicant >/dev/null 2>&1");
 
-    /* Bring interface down */
+    /* Disable interface */
     system("ip link set wlan0 down >/dev/null 2>&1");
 
-    printf("[WIFI] Disconnected\n");
+    printf("[WiFi] Disconnected\n");
 }
 
+/**
+ * @brief Checks whether the Wi-Fi interface has an IP address.
+ *
+ * @return
+ * - 1 if an IP address is assigned.
+ * - 0 otherwise.
+ */
 int wifi_has_ip(void)
 {
     char ip[32];
