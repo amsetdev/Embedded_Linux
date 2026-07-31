@@ -4,9 +4,11 @@
  *
  * This application performs the following tasks:
  * - Initializes network connectivity (Ethernet/Wi-Fi).
- * - Reads Modbus RTU slave devices over RS485.
- * - Reads Modbus TCP slave devices.
- * - Publishes collected data to an MQTT broker.
+ * - Acts as a Modbus RTU SLAVE over RS485, answering requests from
+ *   an external master.
+ * - Acts as a Modbus TCP SLAVE, answering requests from an external
+ *   master over Ethernet/Wi-Fi.
+ * - Publishes its own exposed register values to an MQTT broker.
  * - Stores data locally when offline and replays it later.
  * - Synchronizes the RTC using NTP.
  * - Updates the display and touch interface.
@@ -22,6 +24,7 @@
 
 #include "connection.h"
 #include "modbus.h"
+#include "mb_regmap.h"
 #include "display.h"
 #include "settings.h"
 #include "data.h"
@@ -38,20 +41,23 @@
 /** @brief Application run flag. */
 volatile int running = 1;
 
-/** @brief Modbus polling cycle counter. */
+/** @brief Modbus reporting cycle counter (one per tick-thread pass). */
 static int mb_cycle = 0;
 
-/** @brief Modbus communication status flag. */
+/** @brief Modbus communication status flag (UART/RS485 opened OK). */
 static int mb_ok_flag = 0;
 
-/** @brief Number of successfully read Modbus points. */
+/** @brief Number of currently exposed/valid register points. */
 static int mb_success_cnt = 0;
 
 /** @brief Protects shared Modbus statistics. */
 static pthread_mutex_t points_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/** @brief Modbus RTU polling thread handle. */
+/** @brief Modbus RTU slave thread handle. */
 static pthread_t mb_thread_id;
+
+/** @brief Periodic tick / MQTT publish thread handle. */
+static pthread_t tick_thread_id;
 
 /** @brief RTC synchronization thread handle. */
 static pthread_t rtc_thread_id;
@@ -103,11 +109,11 @@ static void *rtc_sync_thread_func(void *arg)
 }
 
 /**
- * @brief Modbus RTU polling thread.
+ * @brief Modbus RTU slave thread.
  *
- * Periodically reads all configured Modbus points,
- * updates statistics, builds the MQTT payload,
- * and publishes or stores data offline.
+ * Runs the RS485 slave listen/reply loop (mb_rtu_slave_run), which
+ * blocks internally waiting for master requests and returns only
+ * once the application's running flag is cleared.
  *
  * @param arg Unused thread argument.
  *
@@ -117,20 +123,41 @@ static void *mb_thread_func(void *arg)
 {
     (void)arg;
 
+    mb_ok_flag = (uart_fd >= 0);
+
+    mb_rtu_slave_run((uint8_t)cfg.modbus_slave, &running);
+
+    return NULL;
+}
+
+/**
+ * @brief Periodic tick thread.
+ *
+ * Advances the shared register map's demo/simulated values, updates
+ * reporting statistics, builds an MQTT payload of the currently
+ * exposed registers, and publishes/stores it. This replaces the
+ * former "poll external devices" cycle — there is nothing to poll
+ * as a slave, so this thread instead drives what this device
+ * exposes to masters and reports it upstream.
+ *
+ * @param arg Unused thread argument.
+ *
+ * @return Always returns NULL.
+ */
+static void *tick_thread_func(void *arg)
+{
+    (void)arg;
+
     static char payload[PAYLOAD_MAX];
 
     while (running)
     {
-        /* Read configured Modbus points */
-        read_all_points();
-
-        printf("[MODBUS] Reading configured register list\n");
-
-        int success_count = 0;
+        data_tick();
 
         ModbusPoint *pts = data_get_points();
         int cnt = data_get_count();
 
+        int success_count = 0;
         for (int i = 0; i < cnt; i++)
         {
             if (pts[i].valid)
@@ -147,17 +174,12 @@ static void *mb_thread_func(void *arg)
 
         pthread_mutex_unlock(&points_mutex);
 
-        printf("[MB] Cycle %d complete (%d/%d successful)\n",
+        printf("[MB] Tick %d (%d registers exposed)\n",
                mb_cycle,
-               success_count,
-               cnt);
+               success_count);
 
-        /* Build MQTT payload */
-        printf("[MQTT] Building JSON payload\n");
-
+        /* Build MQTT payload of currently exposed values */
         build_payload(payload, sizeof(payload));
-
-        printf("[MQTT] Publishing payload\n");
 
         mqtt_publish(payload);
 
@@ -192,9 +214,9 @@ int main(void)
 
     static mb_thread_arg_t mb_arg =
     {
-        .slave_ip   = "192.168.0.20",
-        .slave_port = 0,
-        .slave_id   = 0,
+        .bind_ip     = "0.0.0.0",
+        .listen_port = 0,
+        .slave_id    = 0,
     };
 
     printf("[SETTINGS] Loading configuration\n");
@@ -215,8 +237,8 @@ int main(void)
 
     printf("[NET] Internet Connected\n");
 
-    printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
-    printf("  Port     : %s @ %d  Slave: %d\n",
+    printf("\n=== MODBUS SLAVE (RTU + TCP) — STM32MP157F-DK2 ===\n");
+    printf("  RTU Port : %s @ %d  Slave ID: %d\n",
            cfg.modbus_port,
            cfg.modbus_baud,
            cfg.modbus_slave);
@@ -274,7 +296,7 @@ int main(void)
         fb_fill(COL_BLUE);
         fb_rect(0, 0, DISP_W, 40, COL_HDRBLUE);
         fb_str_c(10, "AMSET", COL_GOLD, COL_HDRBLUE, 3);
-        fb_str_c(60, "Modbus RTU Reader", COL_WHITE, COL_BLUE, 2);
+        fb_str_c(60, "Modbus Slave", COL_WHITE, COL_BLUE, 2);
         fb_str_c(90, "STM32MP157F-DK2", COL_GRAY, COL_BLUE, 1);
         fb_str_c(110, "HiveMQ Cloud MQTT", COL_GRAY, COL_BLUE, 1);
         fb_hline(20, 130, DISP_W - 40, COL_GOLD);
@@ -287,12 +309,7 @@ int main(void)
 
     touch_init();
 
-    if (!parse_registers())
-    {
-        uart_close();
-        rs485_gpio_close();
-        return 1;
-    }
+    mb_regmap_init();
 
     mqtt_init();
     http_init();
@@ -302,7 +319,7 @@ int main(void)
                    mb_thread_func,
                    NULL);
 
-    printf("[MB] Modbus RTU thread started\n");
+    printf("[MB] Modbus RTU slave thread started\n");
 
     pthread_t mb_thread_id2;
 
@@ -311,7 +328,14 @@ int main(void)
                    mb_thread_func1,
                    &mb_arg);
 
-    printf("[MB] Modbus TCP thread started\n");
+    printf("[MB] Modbus TCP slave thread started\n");
+
+    pthread_create(&tick_thread_id,
+                   NULL,
+                   tick_thread_func,
+                   NULL);
+
+    printf("[MB] Tick/reporting thread started\n");
 
     pthread_create(&rtc_thread_id,
                    NULL,
@@ -359,6 +383,7 @@ int main(void)
 
     pthread_join(mb_thread_id, NULL);
     pthread_join(mb_thread_id2, NULL);
+    pthread_join(tick_thread_id, NULL);
     pthread_join(rtc_thread_id, NULL);
 
     rs485_rx();

@@ -1,4 +1,17 @@
+/**
+ * @file mb_tcp.c
+ * @brief Modbus TCP SLAVE (server) implementation using libmodbus.
+ *
+ * Listens on a TCP port, accepts one or more master connections
+ * (select()-multiplexed, same pattern as libmodbus' own
+ * unit-test-server example), and answers FC01/02/03/04/05/06/15/16
+ * requests directly from the shared register map (mb_regmap.h) via
+ * a modbus_mapping_t that points at the same backing arrays the RTU
+ * slave uses. Every accepted write is also logged to SQLite.
+ */
+
 #include "mb_tcp.h"
+#include "mb_regmap.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,33 +20,27 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 
 #include <modbus/modbus.h>
 #include <sqlite3.h>
 
 /**
- * @brief Modbus TCP master context.
- *
- * Stores the Modbus connection information and SQLite database handle
- * used by the Modbus TCP polling thread.
+ * @brief Modbus TCP slave context.
  */
 typedef struct {
-    char              slave_ip[64];   /**< Slave IP address. */
-    int               slave_port;     /**< Modbus TCP port number. */
-    int               slave_id;       /**< Modbus slave ID (Unit ID). */
-    modbus_t         *mb_ctx;         /**< Modbus connection context. */
-    sqlite3          *db;             /**< SQLite database handle. */
-} master_ctx_t;
+    char     bind_ip[64];
+    int      listen_port;
+    int      slave_id;
+    modbus_t *mb_ctx;
+    sqlite3  *db;
+} slave_ctx_t;
 
 /**
- * @brief Initializes the SQLite database.
- *
- * Opens the database and creates the holding_registers table if it
- * does not already exist.
- *
- * @param db Pointer to the SQLite database handle.
- *
- * @return 0 on success, -1 on failure.
+ * @brief Initializes the SQLite database used to log incoming
+ *        write requests from external masters.
  */
 static int db_init(sqlite3 **db)
 {
@@ -65,18 +72,9 @@ static int db_init(sqlite3 **db)
 }
 
 /**
- * @brief Inserts a holding register value into the database.
- *
- * Stores the register address, value, and current timestamp in the
- * holding_registers table.
- *
- * @param db SQLite database handle.
- * @param address Holding register address.
- * @param value Register value.
- *
- * @return 0 on success, -1 on failure.
+ * @brief Logs one register write received from a master.
  */
-static int db_insert_register(sqlite3 *db, int address, uint16_t value)
+static void db_log_write(sqlite3 *db, int address, uint16_t value)
 {
     char sql[256];
     time_t now = time(NULL);
@@ -91,195 +89,203 @@ static int db_insert_register(sqlite3 *db, int address, uint16_t value)
     char *err_msg = NULL;
     int rc = sqlite3_exec(db, sql, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        fprintf(stderr, "[DB ] Insert failed (addr=%d): %s\n",
-                address, err_msg);
+        fprintf(stderr, "[DB ] Insert failed (addr=%d): %s\n", address, err_msg);
         sqlite3_free(err_msg);
-        return -1;
     }
-    return 0;
 }
 
 /**
- * @brief Creates a Modbus TCP connection.
- *
- * Allocates a Modbus TCP context, configures the response timeout and
- * slave ID, and establishes a TCP connection to the slave.
- *
- * @param ip Slave IP address.
- * @param port Modbus TCP port.
- * @param slave_id Modbus slave (Unit) ID.
- *
- * @return Pointer to a valid Modbus context on success, or NULL on failure.
+ * @brief Builds a libmodbus mapping whose backing arrays ARE the
+ *        shared register map's arrays, so libmodbus reads/writes
+ *        the exact same data the RTU slave serves.
  */
-static modbus_t *mb_connect(const char *ip, int port, int slave_id)
+static modbus_mapping_t *build_shared_mapping(void)
 {
-    modbus_t *ctx = modbus_new_tcp(ip, port);
-    if (!ctx) {
-        fprintf(stderr, "[MB  ] Unable to allocate Modbus context: %s\n",
-                modbus_strerror(errno));
-        return NULL;
-    }
+    modbus_mapping_t *mb_mapping = malloc(sizeof(modbus_mapping_t));
+    if (!mb_mapping) return NULL;
+    memset(mb_mapping, 0, sizeof(*mb_mapping));
 
-    modbus_set_response_timeout(ctx, MODBUS_RESPONSE_TIMEOUT, 0);
+    mb_mapping->nb_bits              = MB_NUM_COILS;
+    mb_mapping->nb_input_bits        = MB_NUM_DISCRETE_INPUTS;
+    mb_mapping->nb_registers         = MB_NUM_HOLDING_REGS;
+    mb_mapping->nb_input_registers   = MB_NUM_INPUT_REGS;
 
-    if (modbus_set_slave(ctx, slave_id) == -1) {
-        fprintf(stderr, "[MB  ] Invalid slave id %d: %s\n",
-                slave_id, modbus_strerror(errno));
-        modbus_free(ctx);
-        return NULL;
-    }
+    mb_mapping->tab_bits             = mb_regmap_coils_ptr();
+    mb_mapping->tab_input_bits       = mb_regmap_discrete_ptr();
+    mb_mapping->tab_registers        = mb_regmap_holding_ptr();
+    mb_mapping->tab_input_registers  = mb_regmap_input_ptr();
 
-    if (modbus_connect(ctx) == -1) {
-        fprintf(stderr, "[MB  ] Connection to %s:%d failed: %s\n",
-                ip, port, modbus_strerror(errno));
-        modbus_free(ctx);
-        return NULL;
-    }
-
-    printf("[MB  ] Connected to slave %s:%d  (id=%d)\n", ip, port, slave_id);
-    return ctx;
+    return mb_mapping;
 }
 
 /**
- * @brief Reads holding registers from the Modbus slave.
- *
- * Reads a block of holding registers, prints the values to the console,
- * and stores them in the SQLite database.
- *
- * @param ctx Pointer to the master context.
- *
- * @return Number of registers read on success, or -1 on failure.
+ * @brief Frees the mapping wrapper WITHOUT freeing the backing
+ *        arrays (those belong to mb_regmap.c, not libmodbus).
  */
-static int read_holding_registers(master_ctx_t *ctx)
+static void free_shared_mapping(modbus_mapping_t *m)
 {
-    uint16_t regs[MODBUS_NUM_REGS];
-
-    int rc = modbus_read_registers(ctx->mb_ctx,
-                                   MODBUS_START_ADDR,
-                                   MODBUS_NUM_REGS,
-                                   regs);
-    if (rc == -1) {
-        fprintf(stderr, "[MB  ] Read error: %s\n", modbus_strerror(errno));
-        return -1;
-    }
-
-    printf("\n[ MODBUS_TCP ] ── Holding Registers (addr 1–%d) ──────────────────\n",
-           MODBUS_NUM_REGS);
-    printf("  %-6s  %-8s  %-6s\n", "Addr", "Dec", "Hex");
-    printf("  ──────────────────────────────────────\n");
-
-    sqlite3_exec(ctx->db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
-
-    for (int i = 0; i < rc; i++) {
-        int addr = MODBUS_START_ADDR + i + 1;
-        printf("  %-6d  %-8u  0x%04X\n",
-               addr, (unsigned int)regs[i], (unsigned int)regs[i]);
-        db_insert_register(ctx->db, addr, regs[i]);
-    }
-
-    sqlite3_exec(ctx->db, "COMMIT;", NULL, NULL, NULL);
-
-    printf("  ──────────────────────────────────────\n");
-    printf("[ MODBUS_TCP ] %d registers read and stored.\n", rc);
-
-    return rc;
+    if (!m) return;
+    free(m);
 }
 
 /**
- * @brief Releases Modbus and database resources.
- *
- * Closes the Modbus TCP connection and the SQLite database if they
- * have been successfully opened.
- *
- * @param ctx Pointer to the master context.
+ * @brief Logs any holding-register write contained in the just
+ *        processed request (FC06/FC16), by diffing wasn't needed —
+ *        libmodbus already applied the write to tab_registers before
+ *        we get to log it, so we simply log the affected addresses.
  */
-static void cleanup(master_ctx_t *ctx)
+static void log_write_if_any(sqlite3 *db, const uint8_t *req, int req_len,
+                              modbus_t *ctx)
 {
-    if (ctx->mb_ctx) {
-        modbus_close(ctx->mb_ctx);
-        modbus_free(ctx->mb_ctx);
-        printf("[ MODBUS_TCP ] Disconnected.\n");
-    }
+    (void)req_len;
+    int hdr = modbus_get_header_length(ctx);
+    uint8_t fc = req[hdr];
 
-    if (ctx->db) {
-        sqlite3_close(ctx->db);
-        printf("[ MODBUS_TCP ] Closed.\n");
+    if (fc == 0x06) {
+        int addr = (req[hdr + 1] << 8) | req[hdr + 2];
+        int val  = (req[hdr + 3] << 8) | req[hdr + 4];
+        db_log_write(db, addr, (uint16_t)val);
+    } else if (fc == 0x10) {
+        int addr = (req[hdr + 1] << 8) | req[hdr + 2];
+        int qty  = (req[hdr + 3] << 8) | req[hdr + 4];
+        mb_regmap_lock();
+        for (int i = 0; i < qty; i++) {
+            uint16_t v = mb_regmap_get_holding(addr + i);
+            db_log_write(db, addr + i, v);
+        }
+        mb_regmap_unlock();
     }
 }
 
 /**
- * @brief Modbus TCP polling thread.
+ * @brief Modbus TCP slave thread.
  *
- * Initializes the SQLite database, connects to the Modbus TCP slave,
- * periodically reads holding registers, stores the values in the
- * database, and automatically attempts to reconnect if communication
- * is lost.
+ * Opens a listening socket, then serves any number of connecting
+ * masters (select()-multiplexed) from the shared register map until
+ * the process's running flag is cleared.
  *
- * @param arg Pointer to an mb_thread_arg_t structure containing the
- *            Modbus TCP configuration.
- *
- * @return Always returns NULL when the thread exits.
+ * @param arg Pointer to an mb_thread_arg_t structure.
  */
 void *mb_thread_func1(void *arg)
 {
+    extern volatile int running;
+
     mb_thread_arg_t *targ = (mb_thread_arg_t *)arg;
 
-    /* ── Validate argument ── */
-    if (!targ || targ->slave_ip[0] == '\0') {
-        fprintf(stderr, "[ MODBUS_TCP ] mb_thread_func: slave_ip not set in mb_thread_arg_t\n");
-        return NULL;
-    }
-
-    /* ── Build internal context ── */
-    master_ctx_t ctx;
+    slave_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
 
-    strncpy(ctx.slave_ip, targ->slave_ip, sizeof(ctx.slave_ip) - 1);
-    ctx.slave_port = (targ->slave_port > 0) ? targ->slave_port : MODBUS_DEFAULT_PORT;
-    ctx.slave_id   = (targ->slave_id   > 0) ? targ->slave_id   : MODBUS_DEFAULT_SLAVE_ID;
-    printf("[ MODBUS_TCP ] modbus tcp start    : %s\n", ctx.slave_ip);
-    printf("[ MODBUS_TCP ] Slave IP   : %s\n", ctx.slave_ip);
-    printf("[ MODBUS_TCP ] Slave Port : %d\n", ctx.slave_port);
-    printf("[ MODBUS_TCP ] Slave ID   : %d\n", ctx.slave_id);
-    printf("[ MODBUS_TCP ] Registers  : 1 to %d\n", MODBUS_NUM_REGS);
-    printf("[ MODBUS_TCP ] Poll every : %d seconds\n\n", POLL_INTERVAL_SEC);
+    strncpy(ctx.bind_ip,
+            (targ && targ->bind_ip[0]) ? targ->bind_ip : "0.0.0.0",
+            sizeof(ctx.bind_ip) - 1);
+    ctx.listen_port = (targ && targ->listen_port > 0) ? targ->listen_port : MODBUS_DEFAULT_PORT;
+    ctx.slave_id    = (targ && targ->slave_id   > 0) ? targ->slave_id   : MODBUS_DEFAULT_SLAVE_ID;
 
-    /* ── SQLite init ── */
+    printf("[ MODBUS_TCP ] modbus tcp slave start\n");
+    printf("[ MODBUS_TCP ] Bind IP    : %s\n", ctx.bind_ip);
+    printf("[ MODBUS_TCP ] Port       : %d\n", ctx.listen_port);
+    printf("[ MODBUS_TCP ] Slave ID   : %d\n", ctx.slave_id);
+
     if (db_init(&ctx.db) != 0) {
         fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: DB init failed.\n");
         return NULL;
     }
 
-    /* ── Modbus connect ── */
-    ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
+    ctx.mb_ctx = modbus_new_tcp(ctx.bind_ip, ctx.listen_port);
     if (!ctx.mb_ctx) {
-        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: initial Modbus connect failed.\n");
-        //if master cant connect to slave tcp_modbus so thrade end here
-        cleanup(&ctx);
+        fprintf(stderr, "[MB  ] Unable to allocate Modbus context: %s\n",
+                modbus_strerror(errno));
+        sqlite3_close(ctx.db);
+        return NULL;
+    }
+    modbus_set_slave(ctx.mb_ctx, ctx.slave_id);
+
+    modbus_mapping_t *mapping = build_shared_mapping();
+    if (!mapping) {
+        fprintf(stderr, "[MB  ] Unable to build register mapping\n");
+        modbus_free(ctx.mb_ctx);
+        sqlite3_close(ctx.db);
         return NULL;
     }
 
-    /* ── Poll loop ── */
-    int poll_count = 0;
-    while (1) {
-        printf("\n[POLL] Cycle #%d\n", ++poll_count);
-
-        int rc = read_holding_registers(&ctx);
-
-        if (rc == -1) {
-            fprintf(stderr, "[ MODBUS_TCP ] Attempting reconnect…\n");
-            modbus_close(ctx.mb_ctx);
-            modbus_free(ctx.mb_ctx);
-            ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
-            if (!ctx.mb_ctx) {
-                fprintf(stderr, "[ MODBUS_TCP ] Reconnect failed. Thread exiting.\n");
-                break;
-            }
-        }
-
-        sleep(POLL_INTERVAL_SEC);
+    int server_socket = modbus_tcp_listen(ctx.mb_ctx, MODBUS_TCP_MAX_CLIENTS);
+    if (server_socket == -1) {
+        fprintf(stderr, "[MB  ] modbus_tcp_listen failed: %s\n",
+                modbus_strerror(errno));
+        free_shared_mapping(mapping);
+        modbus_free(ctx.mb_ctx);
+        sqlite3_close(ctx.db);
+        return NULL;
     }
 
-    cleanup(&ctx);
+    printf("[ MODBUS_TCP ] Listening on %s:%d (slave id=%d)\n",
+           ctx.bind_ip, ctx.listen_port, ctx.slave_id);
+
+    fd_set refset;
+    FD_ZERO(&refset);
+    FD_SET(server_socket, &refset);
+    int fdmax = server_socket;
+
+    while (running) {
+        fd_set rdset = refset;
+
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+        int rc = select(fdmax + 1, &rdset, NULL, NULL, &tv);
+        if (rc == -1) {
+            if (errno == EINTR) continue;
+            fprintf(stderr, "[MB  ] select() failed: %s\n", strerror(errno));
+            break;
+        }
+        if (rc == 0) continue; /* timeout — re-check running */
+
+        for (int fd = 0; fd <= fdmax; fd++) {
+            if (!FD_ISSET(fd, &rdset)) continue;
+
+            if (fd == server_socket) {
+                /* New incoming connection. */
+                struct sockaddr_in caddr;
+                socklen_t alen = sizeof(caddr);
+                int newfd = accept(server_socket, (struct sockaddr *)&caddr, &alen);
+                if (newfd < 0) {
+                    perror("accept");
+                    continue;
+                }
+                FD_SET(newfd, &refset);
+                if (newfd > fdmax) fdmax = newfd;
+                printf("[ MODBUS_TCP ] Master connected (fd=%d)\n", newfd);
+            } else {
+                /* Existing client sent a request (or disconnected). */
+                modbus_set_socket(ctx.mb_ctx, fd);
+
+                uint8_t query[MODBUS_TCP_MAX_ADU_LENGTH];
+                int qlen = modbus_receive(ctx.mb_ctx, query);
+
+                if (qlen > 0) {
+                    log_write_if_any(ctx.db, query, qlen, ctx.mb_ctx);
+                    modbus_reply(ctx.mb_ctx, query, qlen, mapping);
+                } else if (qlen == -1) {
+                    printf("[ MODBUS_TCP ] Master disconnected (fd=%d)\n", fd);
+                    close(fd);
+                    FD_CLR(fd, &refset);
+                    if (fd == fdmax) {
+                        while (fdmax >= 0 && !FD_ISSET(fdmax, &refset)) fdmax--;
+                    }
+                }
+            }
+        }
+    }
+
+    printf("[ MODBUS_TCP ] Shutting down…\n");
+
+    for (int fd = 0; fd <= fdmax; fd++) {
+        if (fd != server_socket && FD_ISSET(fd, &refset)) close(fd);
+    }
+    close(server_socket);
+
+    free_shared_mapping(mapping);
+    modbus_free(ctx.mb_ctx);
+    sqlite3_close(ctx.db);
+
+    printf("[ MODBUS_TCP ] Stopped.\n");
     return NULL;
 }

@@ -1,11 +1,15 @@
 /**
  * @file modbus.h
- * @brief Modbus RTU communication interface.
+ * @brief Modbus RTU SLAVE communication interface.
  *
  * This module provides low-level RS-485 GPIO control, UART communication,
- * and Modbus RTU frame handling functions. It is responsible for managing
- * transmission direction, serial communication, CRC calculation, and
- * Modbus transactions.
+ * and Modbus RTU frame handling for operation as a Modbus RTU SLAVE
+ * (server). It listens on RS-485 for requests addressed to its own
+ * slave ID and replies from the shared register map (mb_regmap.h).
+ *
+ * The physical layer (RS-485 direction GPIO + UART open/close/read)
+ * is unchanged from the master version; only the transaction logic
+ * is inverted (listen-and-reply instead of request-and-wait).
  */
 
 #ifndef MODBUS_H
@@ -26,13 +30,13 @@ extern "C" {
  */
 typedef enum
 {
-    /** Holding Register (Function Code 03). */
+    /** Holding Register (Function Code 03/06/16). */
     REG_HOLDING,
 
     /** Input Register (Function Code 04). */
     REG_INPUT,
 
-    /** Coil Status (Function Code 01). */
+    /** Coil Status (Function Code 01/05/15). */
     REG_COIL,
 
     /** Discrete Input (Function Code 02). */
@@ -55,19 +59,34 @@ typedef enum
 #define RS485_TX_GUARD_US 1100
 
 /**
- * @brief Maximum time to wait for a slave response (milliseconds).
+ * @brief Maximum time to wait for the START of a new request while idle
+ *        (milliseconds). The slave blocks here between requests.
  */
-#define RX_TIMEOUT_MS     1000
+#define RX_IDLE_TIMEOUT_MS   1000
 
 /**
- * @brief Maximum retry attempts for each Modbus request.
+ * @brief Maximum time to wait for the remainder of a frame once the
+ *        first byte has arrived (milliseconds). Used to detect the
+ *        Modbus RTU inter-frame silence / end of frame.
+ */
+#define RX_FRAME_TIMEOUT_MS  50
+
+/**
+ * @brief Maximum number of retry attempts (kept for API compatibility;
+ *        unused by the slave, which does not retry).
  */
 #define MAX_RETRIES       3
 
 /**
  * @brief Delay between consecutive Modbus requests (microseconds).
+ *        Kept for API compatibility with the rest of the application.
  */
 #define POINT_DELAY_US    15000
+
+/**
+ * @brief Maximum size of a Modbus RTU ADU this slave will buffer.
+ */
+#define MB_RTU_MAX_ADU    256
 
 /* -------------------------------------------------------------------------- */
 /* Global Variables                                                           */
@@ -174,33 +193,16 @@ int uart_read_timeout(uint8_t *buf, int want, int timeout_ms);
 uint16_t mb_crc16(const uint8_t *buf, int len);
 
 /**
- * @brief Returns the expected response length for a function code.
+ * @brief Runs the Modbus RTU slave loop: waits for a request on the
+ *        UART addressed to @p slave_id (or the broadcast address 0),
+ *        decodes it, serves it from the shared register map, and
+ *        transmits the reply. Runs until *running becomes 0.
  *
- * @param fc Modbus function code.
- *
- * @return Expected response length in bytes.
+ * @param slave_id  This device's Modbus RTU slave address (1-247).
+ * @param running   Pointer to the application's run flag; the loop
+ *                  exits promptly once *running == 0.
  */
-int mb_reply_len(uint8_t fc);
-
-/**
- * @brief Executes a Modbus RTU transaction.
- *
- * Builds a Modbus request frame, transmits it over RS-485, waits for
- * the slave response, validates the CRC, and extracts the returned value.
- *
- * @param slave Modbus slave address.
- * @param fc Modbus function code.
- * @param addr Register or coil address.
- * @param value Pointer to store the received value.
- *
- * @return
- * - 1 if the transaction succeeds.
- * - 0 if the transaction fails.
- */
-int mb_transaction(uint8_t slave,
-                   uint8_t fc,
-                   uint16_t addr,
-                   uint16_t *value);
+void mb_rtu_slave_run(uint8_t slave_id, volatile int *running);
 
 #ifdef __cplusplus
 }

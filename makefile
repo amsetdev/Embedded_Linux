@@ -30,7 +30,8 @@ SRCS    := $(SRC_DIR)/main.c       \
            $(SRC_DIR)/wifi.c \
            $(SRC_DIR)/network_manager.c \
            $(SRC_DIR)/ethernet.c  \
-           $(SRC_DIR)/json.c
+           $(SRC_DIR)/json.c \
+           $(SRC_DIR)/mb_regmap.c 
 
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
@@ -55,7 +56,7 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.137.121
+BOARD_IP   := 192.168.137.224
 BOARD_DIR  := /home/root/edb_c/linking/
 
 # ============================================================

@@ -1,96 +1,57 @@
 /**
  * @file mb_tcp.h
- * @brief Modbus TCP master interface.
+ * @brief Modbus TCP SLAVE (server) interface.
  *
- * This module implements a Modbus TCP master that periodically reads
- * holding registers from a Modbus TCP slave, stores the acquired data
- * in an SQLite database, and can be integrated with MQTT for cloud
- * publishing.
+ * This module implements a Modbus TCP slave/server using libmodbus.
+ * It listens for incoming master connections and serves the shared
+ * register map (mb_regmap.h) — the same data model the RTU slave
+ * exposes over RS485.
  */
 
-#ifndef MODBUS_MASTER_H
-#define MODBUS_MASTER_H
+#ifndef MODBUS_SLAVE_TCP_H
+#define MODBUS_SLAVE_TCP_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* -------------------------------------------------------------------------- */
-/* Modbus Configuration                                                       */
+/* Modbus TCP Slave Configuration                                            */
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Default Modbus TCP port.
+ * @brief TCP port this slave listens on.
  */
 #define MODBUS_DEFAULT_PORT         502
 
 /**
- * @brief Default Modbus slave ID.
+ * @brief This device's Modbus slave ID (Unit Identifier).
+ *        A master must address requests to this ID (or 0xFF/broadcast,
+ *        which libmodbus accepts for TCP).
  */
 #define MODBUS_DEFAULT_SLAVE_ID     1
 
 /**
- * @brief Starting holding register address.
+ * @brief Maximum number of simultaneously connected masters.
  */
-#define MODBUS_START_ADDR           0
+#define MODBUS_TCP_MAX_CLIENTS      5
 
 /**
- * @brief Number of holding registers to read.
- */
-#define MODBUS_NUM_REGS             100
-
-/**
- * @brief Response timeout in seconds.
- */
-#define MODBUS_RESPONSE_TIMEOUT     2
-
-/**
- * @brief Polling interval in seconds.
- */
-#define POLL_INTERVAL_SEC           120
-
-/**
- * @brief SQLite database file path.
+ * @brief SQLite database file path used to log write requests
+ *        received from external masters.
  */
 #define DB_PATH                     "/tmp/modbus_data.db"
 
 /* -------------------------------------------------------------------------- */
-/* MQTT Configuration                                                         */
+/* MQTT Configuration (unchanged — still used for status publishing)         */
 /* -------------------------------------------------------------------------- */
 
-/**
- * @brief MQTT broker hostname.
- */
 #define MQTT_BROKER                  "25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud"
-
-/**
- * @brief MQTT broker port.
- */
 #define MQTT_PORT                   8883
-
-/**
- * @brief MQTT publish topic.
- */
 #define MQTT_TOPIC                  "modbus/data"
-
-/**
- * @brief MQTT username.
- */
 #define MQTT_USERNAME               "Aishwarya"
-
-/**
- * @brief MQTT password.
- */
 #define MQTT_PASSWORD               "password"
-
-/**
- * @brief MQTT client identifier.
- */
-#define MQTT_CLIENT_ID              "stm32mp157_modbus_master"
-
-/**
- * @brief MQTT keep-alive interval in seconds.
- */
+#define MQTT_CLIENT_ID              "stm32mp157_modbus_slave"
 #define MQTT_KEEPALIVE              60
 
 /* -------------------------------------------------------------------------- */
@@ -98,26 +59,20 @@ extern "C" {
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Modbus TCP thread configuration.
+ * @brief Modbus TCP slave thread configuration.
  *
- * This structure contains the connection parameters required by the
- * Modbus TCP polling thread.
+ * Kept as an argument struct (same shape as the former master
+ * config) so main.c's thread-creation code barely changes.
  */
 typedef struct
 {
-    /**
-     * @brief Modbus slave IPv4 address.
-     */
-    char slave_ip[64];
+    /** @brief Local TCP bind address ("0.0.0.0" for all interfaces). */
+    char bind_ip[64];
 
-    /**
-     * @brief Modbus TCP port number.
-     */
-    int slave_port;
+    /** @brief TCP port to listen on (0 = use MODBUS_DEFAULT_PORT). */
+    int listen_port;
 
-    /**
-     * @brief Modbus slave ID (Unit Identifier).
-     */
+    /** @brief This device's Modbus slave ID (0 = use MODBUS_DEFAULT_SLAVE_ID). */
     int slave_id;
 
 } mb_thread_arg_t;
@@ -127,12 +82,11 @@ typedef struct
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Modbus TCP polling thread entry function.
+ * @brief Modbus TCP slave thread entry function.
  *
- * Initializes the SQLite database, connects to the configured Modbus
- * TCP slave, periodically reads holding registers, stores the values
- * in the database, and automatically reconnects if communication is
- * lost.
+ * Initializes the SQLite write-log database, opens a listening TCP
+ * socket, and serves incoming master connections from the shared
+ * register map until the application's running flag is cleared.
  *
  * @param arg Pointer to an ::mb_thread_arg_t structure.
  *
@@ -144,4 +98,4 @@ void *mb_thread_func1(void *arg);
 }
 #endif
 
-#endif /* MODBUS_MASTER_H */
+#endif /* MODBUS_SLAVE_TCP_H */

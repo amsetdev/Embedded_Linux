@@ -1,126 +1,81 @@
 /**
  * @file data.h
- * @brief Modbus register configuration and data access.
+ * @brief Slave-side register snapshot, configuration, and simulation tick.
  *
- * This module loads the register list from
- * smart_rtu_config.json and provides APIs
- * for reading Modbus registers.
+ * The master version of this module polled external devices and
+ * stored results into a local point table. As a SLAVE, there is
+ * nothing to poll — the roles are reversed: external masters poll
+ * *this* device. This module now:
+ *   - owns the periodic "tick" that advances the demo/simulated
+ *     values in the shared register map (mb_regmap.h), and
+ *   - exposes a read-only ModbusPoint-shaped snapshot of the
+ *     holding registers, purely so display.c and mqtt.c (which
+ *     show/publish "current values") need no logic changes beyond
+ *     reading from the slave's own exposed data instead of a
+ *     polled-from-elsewhere value.
  */
 
 #ifndef DATA_H
 #define DATA_H
 
 #include "modbus.h"
-#include "json.h"
+#include "mb_regmap.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/*-----------------------------------------------------------
- * Configuration
- *----------------------------------------------------------*/
+/** @brief Maximum number of points in the display/MQTT snapshot. */
+#define MAX_POINTS     MB_NUM_HOLDING_REGS
 
-/**
- * @brief Maximum number of Modbus registers supported.
- */
-#define MAX_POINTS     2000
-
-/**
- * @brief Maximum register label length.
- */
+/** @brief Maximum register label length. */
 #define LABEL_MAX      64
 
-/**
- * @brief Maximum engineering unit string length.
- */
+/** @brief Maximum engineering unit string length. */
 #define UNIT_MAX       16
 
 /**
- * @brief Smart RTU configuration JSON.
- */
-#define CONFIG_FILE    "smart_rtu_config.json"
-
-/*-----------------------------------------------------------
- * Modbus Register
- *----------------------------------------------------------*/
-
-/**
- * @brief Represents one Modbus register configured
- *        in smart_rtu_config.json.
+ * @brief Snapshot of one exposed holding register, for display/MQTT.
  */
 typedef struct
 {
-    /** Register name */
-    char label[LABEL_MAX];
-
-    /** Modbus register address */
-    int address;
-
-    /** Register type */
+    char    label[LABEL_MAX];
+    int     address;
     RegType reg_type;
-
-    /** Data type
-     *  'w' = uint16
-     *  'd' = float
-     *  etc.
-     */
-    char data_type;
-
-    /** Engineering unit */
-    char unit[UNIT_MAX];
-
-    /** Latest value */
-    int value;
-
-    /** Valid flag */
-    int valid;
-
+    char    data_type;
+    char    unit[UNIT_MAX];
+    int     value;
+    int     valid;
 } ModbusPoint;
 
-/*-----------------------------------------------------------
- * Public API
- *----------------------------------------------------------*/
-
 /**
- * @brief Parse the registers[] array from
- *        smart_rtu_config.json.
- *
- * Populates the internal ModbusPoint table.
- *
- * @return 1 Success
- * @return 0 Failure
+ * @brief Advances the shared register map's demo/simulated values by
+ *        one step. Call periodically (e.g. once per second) from a
+ *        background thread.
  */
-int parse_registers(void);
+void data_tick(void);
 
 /**
- * @brief Get pointer to configured register list.
+ * @brief Number of simulation ticks performed since startup.
  *
- * @return Pointer to ModbusPoint array.
+ * @return Tick count.
+ */
+unsigned long data_get_tick_count(void);
+
+/**
+ * @brief Returns a read-only snapshot of the currently exposed
+ *        holding registers (label "HR<addr>", current value, valid=1),
+ *        refreshed from the shared register map on every call.
+ *
+ * @return Pointer to an internal, statically-allocated array of
+ *         ::data_get_count() entries. Valid until the next call.
  */
 ModbusPoint *data_get_points(void);
 
 /**
- * @brief Get number of configured registers.
- *
- * @return Register count.
+ * @brief Number of entries returned by data_get_points().
  */
 int data_get_count(void);
-
-/**
- * @brief Read one Modbus register.
- *
- * @param pt Pointer to register.
- *
- * @return 1 Success
- * @return 0 Failure
- */
-int read_point(ModbusPoint *pt);
-
-/**
- * @brief Read all configured registers.
- */
-void read_all_points(void);
 
 #ifdef __cplusplus
 }
