@@ -114,14 +114,33 @@ int ota_load_config(void)
                 OTA_PATH_LEN - 1);
     }
 
-    item = cJSON_GetObjectItem(root, "backup_directory");
+    item = cJSON_GetObjectItem(root, "mqtt_host");
 
     if (cJSON_IsString(item))
     {
-        strncpy(ctx->config.backup_directory,
+        strncpy(ctx->config.mqtt_host,
                 item->valuestring,
-                OTA_PATH_LEN - 1);
+                sizeof(ctx->config.mqtt_host) - 1);
     }
+
+    item = cJSON_GetObjectItem(root, "mqtt_port");
+
+    if (cJSON_IsNumber(item))
+    {
+        ctx->config.mqtt_port = item->valueint;
+    }
+
+    item = cJSON_GetObjectItem(root, "mqtt_token");
+
+    if (cJSON_IsString(item))
+    {
+        strncpy(ctx->config.mqtt_token,
+                item->valuestring,
+                sizeof(ctx->config.mqtt_token) - 1);
+    }
+    printf("MQTT Host          : %s\n", ctx->config.mqtt_host);
+    printf("MQTT Port          : %d\n", ctx->config.mqtt_port);
+    printf("MQTT Token         : %s\n", ctx->config.mqtt_token);
 
     cJSON_Delete(root);
 

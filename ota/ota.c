@@ -493,6 +493,21 @@ static int ota_mqtt_connect(void)
         return -1;
     }
 
+    rc = mosquitto_tls_set(g_ota.mosq,
+                           "/etc/ssl/certs/ca-certificates.crt",
+                           NULL,
+                           NULL,
+                           NULL,
+                           NULL);
+
+    if (rc != MOSQ_ERR_SUCCESS)
+    {
+        printf("OTA: TLS set failed (%d)\n", rc);
+        return -1;
+    }
+
+    mosquitto_tls_opts_set(g_ota.mosq, 1, NULL, NULL);
+
     rc = mosquitto_connect(
                 g_ota.mosq,
                 g_ota.config.mqtt_host,
@@ -623,35 +638,37 @@ static void ota_on_message(struct mosquitto *mosq,
                            void *userdata,
                            const struct mosquitto_message *msg)
 {
-    (void)mosq;
     (void)userdata;
 
-    if (msg == NULL)
-    {
-        return;
-    }
+    if (msg == NULL) return;
 
-    printf("\n==============================\n");
-    printf("OTA RPC Received\n");
-    printf("Topic   : %s\n", msg->topic);
-    printf("Payload : %s\n", (char *)msg->payload);
-    printf("==============================\n");
+    printf("\nOTA RPC Received\nTopic   : %s\nPayload : %s\n",
+           msg->topic, (char *)msg->payload);
+
+    const char *prefix = "v1/devices/me/rpc/request/";
+    if (strncmp(msg->topic, prefix, strlen(prefix)) != 0)
+        return;
+    const char *req_id = msg->topic + strlen(prefix);
 
     if (strstr((char *)msg->payload, "fw_update") == NULL)
-    {
         return;
-    }
 
-    printf("OTA Update Requested\n");
+    printf("OTA Update Requested (reqId=%s)\n", req_id);
 
-    if (ota_execute_update() != 0)
-    {
-        printf("OTA Update Failed\n");
-    }
-    else
-    {
-        printf("OTA Update Completed\n");
-    }
+    int rc = ota_execute_update();
+
+    char resp_topic[128];
+    snprintf(resp_topic, sizeof(resp_topic),
+             "v1/devices/me/rpc/response/%s", req_id);
+
+    const char *resp_payload = (rc == 0)
+        ? "{\"status\":\"ok\"}"
+        : "{\"status\":\"failed\"}";
+
+    mosquitto_publish(mosq, NULL, resp_topic,
+                      (int)strlen(resp_payload), resp_payload, 1, false);
+
+    printf(rc == 0 ? "OTA Update Completed\n" : "OTA Update Failed\n");
 }
 
 int ota_compare_version(const char *current,

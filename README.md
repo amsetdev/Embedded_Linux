@@ -52,7 +52,7 @@ The ARM binary is output at `build/main`.
 | Action | Command |
 |--------|---------|
 | Build | `docker run --rm -v ${PWD}:/project stm32mp1-build` |
-| Build + Deploy | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make flash` |
+| Build + Deploy | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS="Amset@123" stm32mp1-build make flash` |
 | Deploy only | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy` |
 | Clean | `docker run --rm -v ${PWD}:/project stm32mp1-build make clean` |
 | Shell | `docker run --rm -it -v ${PWD}:/project stm32mp1-build bash` |
@@ -74,7 +74,7 @@ BOARD_DIR  := /home/root/edb_c/linking/
 Update `BOARD_IP` to match your board's IP address. You can also override at runtime:
 
 ```bash
-docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy BOARD_IP=<your-board-ip>
+docker run --rm -v ${PWD}:/project --network host -e SSHPASS="Amset@123" stm32mp1-build make deploy BOARD_IP=<your-board-ip>
 ```
 
 ## Running on the Board
