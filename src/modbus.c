@@ -223,7 +223,35 @@ void uart_flush_rx(void)
  */
 int uart_read_timeout(uint8_t *buf, int want, int timeout_ms)
 {
-    ...
+    int got = 0;
+    struct timeval deadline;
+    gettimeofday(&deadline, NULL);
+    deadline.tv_sec  += timeout_ms / 1000;
+    deadline.tv_usec += (timeout_ms % 1000) * 1000;
+    if (deadline.tv_usec >= 1000000) {
+        deadline.tv_sec++;
+        deadline.tv_usec -= 1000000;
+}
+
+  while (got < want) {
+        struct timeval now, rem;
+        gettimeofday(&now, NULL);
+        rem.tv_sec  = deadline.tv_sec  - now.tv_sec;
+        rem.tv_usec = deadline.tv_usec - now.tv_usec;
+        if (rem.tv_usec < 0) { rem.tv_sec--; rem.tv_usec += 1000000; }
+        if (rem.tv_sec < 0) break;
+
+        fd_set rds;
+        FD_ZERO(&rds);
+        FD_SET(uart_fd, &rds);
+        int r = select(uart_fd + 1, &rds, NULL, NULL, &rem);
+        if (r <= 0) break;
+
+        int n = read(uart_fd, buf + got, want - got);
+        if (n > 0) got += n;
+        else if (n < 0 && errno != EAGAIN) break;
+    }
+    return got;
 }
 
 /**
@@ -236,7 +264,15 @@ int uart_read_timeout(uint8_t *buf, int want, int timeout_ms)
  */
 uint16_t mb_crc16(const uint8_t *buf, int len)
 {
-    ...
+    uint16_t crc = 0xFFFF;
+    for (int i = 0; i < len; i++) {
+        crc ^= buf[i];
+        for (int b = 0; b < 8; b++) {
+            if (crc & 1) crc = (crc >> 1) ^ 0xA001;
+            else         crc >>= 1;
+        }
+    }
+    return crc;
 }
 
 /**
@@ -248,7 +284,16 @@ uint16_t mb_crc16(const uint8_t *buf, int len)
  */
 int mb_reply_len(uint8_t fc)
 {
-    ...
+    switch (fc) {
+        case 0x01:  /* read coils          */
+        case 0x02:  /* read discrete input */
+            return 6;
+        case 0x03:  /* read holding regs   */
+        case 0x04:  /* read input regs     */
+            return 7;
+        default:
+            return 7;
+    }
 }
 
 /**
@@ -271,10 +316,66 @@ int mb_reply_len(uint8_t fc)
  *
  * @return 1 on success, 0 on communication or validation failure.
  */
-int mb_transaction(uint8_t slave,
-                   uint8_t fc,
-                   uint16_t addr,
-                   uint16_t *value)
+int mb_transaction(uint8_t slave, uint8_t fc, uint16_t addr, uint16_t *value)
 {
-    ...
+    if (uart_fd < 0) return 0;
+
+    /* Build request frame */
+    uint8_t req[8];
+    req[0] = slave;
+    req[1] = fc;
+    req[2] = (addr >> 8) & 0xFF;
+    req[3] =  addr       & 0xFF;
+    req[4] = 0x00;
+    req[5] = 0x01;
+    uint16_t crc = mb_crc16(req, 6);
+    req[6] = crc & 0xFF;
+    req[7] = (crc >> 8) & 0xFF;
+
+    uart_flush_rx();
+
+    /* STEP 1: assert TX */
+    rs485_tx();
+
+    /* STEP 2: transmit */
+    int wr = write(uart_fd, req, 8);
+    if (wr != 8) { rs485_rx(); return 0; }
+
+    /* STEP 3: drain HW shift register */
+    uart_drain_tx();
+
+    /* STEP 4: switch to RX */
+    rs485_rx();
+
+    /* STEP 5: read reply */
+    int want = mb_reply_len(fc);
+    uint8_t rsp[16];
+    memset(rsp, 0, sizeof(rsp));
+    int got = uart_read_timeout(rsp, want, RX_TIMEOUT_MS);
+
+    if (got != want) return 0;
+
+    /* STEP 6: validate CRC */
+    uint16_t rcrc = (rsp[got-1] << 8) | rsp[got-2];
+    uint16_t ccrc = mb_crc16(rsp, got - 2);
+    if (rcrc != ccrc) return 0;
+
+    /* STEP 7: check slave addr + FC */
+    if (rsp[0] != slave) return 0;
+    if (rsp[1] != fc)    return 0;
+
+    /* STEP 8: extract value */
+    switch (fc) {
+        case 0x01:
+        case 0x02:
+            *value = rsp[3] & 0x01;
+            break;
+        case 0x03:
+        case 0x04:
+            *value = ((uint16_t)rsp[3] << 8) | rsp[4];
+            break;
+        default:
+            *value = 0;
+    }
+    return 1;
 }

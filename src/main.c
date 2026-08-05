@@ -35,6 +35,8 @@
 #include "ethernet.h"
 #include "wifi.h"
 
+
+
 /** @brief Application run flag. */
 volatile int running = 1;
 
@@ -191,11 +193,11 @@ int main(void)
     drive_logger_start();
 
     static mb_thread_arg_t mb_arg =
-    {
-        .slave_ip   = "192.168.0.20",
-        .slave_port = 0,
-        .slave_id   = 0,
-    };
+        {
+            .slave_ip = "192.168.0.20",
+            .slave_port = 0,
+            .slave_id = 0,
+        };
 
     printf("[SETTINGS] Loading configuration\n");
 
@@ -297,6 +299,7 @@ int main(void)
     mqtt_init();
     http_init();
 
+
     pthread_create(&mb_thread_id,
                    NULL,
                    mb_thread_func,
@@ -339,8 +342,8 @@ int main(void)
 
             pthread_mutex_lock(&points_mutex);
 
-            cyc  = mb_cycle;
-            ok   = mb_ok_flag;
+            cyc = mb_cycle;
+            ok = mb_ok_flag;
             succ = mb_success_cnt;
 
             pthread_mutex_unlock(&points_mutex);
@@ -360,6 +363,8 @@ int main(void)
     pthread_join(mb_thread_id, NULL);
     pthread_join(mb_thread_id2, NULL);
     pthread_join(rtc_thread_id, NULL);
+    
+    
 
     rs485_rx();
     rs485_gpio_close();
@@ -369,6 +374,8 @@ int main(void)
     http_cleanup();
     drm_cleanup();
     offline_cleanup();
+   
+    
 
     network_stop();
 

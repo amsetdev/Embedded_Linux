@@ -1,50 +1,27 @@
 /**
  * @file rtc.c
- * @brief RTC synchronization module for the STM32MP1 A7 core.
+ * @brief RTC synchronization module for STM32MP1 A7 core.
  *
- * This module synchronizes the Linux system time with the external
+ * This module synchronizes the Linux system time with an external
  * DS3231 RTC connected to the Cortex-M4 core.
  *
- * The workflow is:
- * - Verify internet connectivity.
- * - Synchronize the Linux system clock using NTP.
- * - Read the current system date and time.
- * - Pack the date and time into the shared RETRAM format.
- * - Write the values to the M4 command registers.
- * - Wait for an acknowledgement from the M4 firmware.
+ * Workflow:
+ * - Checks for Internet connectivity.
+ * - Performs a one-time NTP synchronization.
+ * - Reads the current Linux system time.
+ * - Packs the time and date into RETRAM command registers.
+ * - Signals the Cortex-M4 firmware to update the DS3231 RTC.
+ * - Waits for an acknowledgement from the Cortex-M4.
  *
+ * The Linux system clock is assumed to be synchronized using NTP.
  * This file is intended to be used as a module. Call rtc_main()
- * from the application (for example, from a background thread).
+ * from the application whenever the RTC needs to be synchronized.
  *
- * To monitor the RTC command registers on the A7 side:
- *
- * Hex:
- * @code
- * devmem2 0x38000014 w
- * devmem2 0x38000024 w
- * devmem2 0x38000028 w
- * @endcode
- *
- * Decimal:
- * @code
- * watch -n 1 '
- * hb=$(devmem2 0x38000014 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
- * t=$(devmem2 0x38000024 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
- * d=$(devmem2 0x38000028 w | grep -oE "0x[0-9A-Fa-f]+$" | tail -1)
- *
- * printf "HEARTBEAT : %d\n" "$hb"
- * printf "TIME      : %02d:%02d:%02d\n" \
- *     "$(( (t)>>16 & 0xFF ))" \
- *     "$(( (t)>>8  & 0xFF ))" \
- *     "$(( t & 0xFF ))"
- *
- * printf "DATE      : DOW=%d 20%02d-%02d-%02d\n" \
- *     "$(( (d)>>24 & 0xFF ))" \
- *     "$(( (d)>>16 & 0xFF ))" \
- *     "$(( (d)>>8  & 0xFF ))" \
- *     "$(( d & 0xFF ))"
- * '
- * @endcode
+ * RETRAM register layout:
+ * - OFF_CMD_TIME : Packed HH:MM:SS
+ * - OFF_CMD_DATE : Packed DOW:YY:MM:DD
+ * - OFF_CMD_FLAG : Command flag
+ * - OFF_CMD_ACK  : Acknowledgement flag
  */
 
 #include <stdio.h>
@@ -59,20 +36,25 @@
 
 #include "rtc.h"
 
-/** @brief Pointer to the mapped RETRAM memory region. */
+/**
+ * @brief Pointer to the mapped RETRAM memory region.
+ */
 static volatile uint8_t *retram_map = NULL;
 
 /**
- * @brief Maps the RETRAM shared memory into the process address space.
+ * @brief Maps the Cortex-M4 RETRAM into the Linux virtual address space.
  *
- * Opens /dev/mem and maps the RETRAM region used for communication
- * between the Cortex-A7 and Cortex-M4.
+ * Opens /dev/mem and maps the shared RETRAM region used for
+ * communication between the Cortex-A7 and Cortex-M4 cores.
  *
- * @return 0 on success, -1 on failure.
+ * @return
+ * - 0 on success.
+ * - -1 if the memory cannot be mapped.
  */
 int map_retram(void)
 {
     int fd = open("/dev/mem", O_RDWR | O_SYNC);
+
     if (fd < 0)
     {
         perror("open /dev/mem");
@@ -102,7 +84,7 @@ int map_retram(void)
 /**
  * @brief Unmaps the RETRAM memory region.
  *
- * Releases the mapped RETRAM region if it has been previously mapped.
+ * Releases the mapped RETRAM memory if it has been mapped.
  */
 void unmap_retram(void)
 {
@@ -117,7 +99,7 @@ void unmap_retram(void)
  * @brief Writes a 32-bit value to a RETRAM register.
  *
  * @param offset Register offset from the RETRAM base address.
- * @param val 32-bit value to write.
+ * @param val Value to write.
  */
 void reg_write32(uint32_t offset, uint32_t val)
 {
@@ -137,73 +119,136 @@ uint32_t reg_read32(uint32_t offset)
 }
 
 /**
- * @brief Checks whether internet connectivity is available.
+ * @brief Checks whether Internet connectivity is available.
  *
- * Executes a single ICMP ping to Google's public DNS server
- * (8.8.8.8) using fork() and execlp().
+ * Executes a single ping request to Google's public DNS server
+ * (8.8.8.8). Output is redirected to /dev/null.
  *
- * @return 1 if internet is reachable, otherwise 0.
+ * @return
+ * - 1 if the host is reachable.
+ * - 0 otherwise.
  */
 int check_internet(void)
 {
-    ...
+    pid_t pid = fork();
+
+    if (pid == 0)
+    {
+        int devnull = open("/dev/null", O_WRONLY);
+
+        if (devnull >= 0)
+        {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+        }
+
+        execlp("ping",
+               "ping",
+               "-c", "1",
+               "-W", "2",
+               "8.8.8.8",
+               (char *)NULL);
+
+        _exit(127);
+    }
+    else if (pid > 0)
+    {
+        int status;
+
+        waitpid(pid, &status, 0);
+
+        return (WIFEXITED(status) &&
+                WEXITSTATUS(status) == 0);
+    }
+
+    return 0;
 }
 
 /**
- * @brief Performs a one-time NTP synchronization.
+ * @brief Performs a one-shot NTP synchronization.
  *
- * Executes the ntpd command to synchronize the Linux system clock.
- * Failure is ignored because another NTP service may already be
- * maintaining the system time.
+ * Executes ntpd in one-shot mode to synchronize the Linux system
+ * clock with an NTP server.
+ *
+ * Any failure is ignored because another time synchronization
+ * service may already be running.
  */
 void sync_ntp(void)
 {
-    ...
+    pid_t pid = fork();
+
+    if (pid == 0)
+    {
+        int devnull = open("/dev/null", O_WRONLY);
+
+        if (devnull >= 0)
+        {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+        }
+
+        execlp("ntpd",
+               "ntpd",
+               "-q",
+               "-p",
+               "pool.ntp.org",
+               (char *)NULL);
+
+        _exit(127);
+    }
+    else if (pid > 0)
+    {
+        int status;
+        waitpid(pid, &status, 0);
+    }
 }
 
 /**
- * @brief Synchronizes the RTC through the Cortex-M4.
+ * @brief Synchronizes the DS3231 RTC using the Linux system time.
  *
- * The function:
- * - Checks internet connectivity.
+ * The function performs the following operations:
+ * - Verifies Internet connectivity.
  * - Synchronizes the Linux system clock using NTP.
- * - Reads the current local date and time.
- * - Packs the date/time into RETRAM command registers.
- * - Signals the M4 firmware.
- * - Waits for an acknowledgement.
+ * - Reads the current system date and time.
+ * - Packs the date and time into RETRAM command registers.
+ * - Signals the Cortex-M4 firmware to update the DS3231 RTC.
+ * - Waits for an acknowledgement from the Cortex-M4.
  *
  * @return
- * - 0 : RTC updated successfully.
- * - 1 : Internet unavailable or system time error.
- * - 2 : Failed to map RETRAM.
- * - 3 : M4 acknowledgement timeout.
+ * - 0 : RTC successfully updated.
+ * - 1 : Internet unavailable or time conversion failed.
+ * - 2 : RETRAM mapping failed.
+ * - 3 : Cortex-M4 acknowledgement timeout.
  */
 int rtc_main(void)
 {
     if (!check_internet())
     {
-        fprintf(stderr, "No internet - skipping RTC sync.\n");
+        fprintf(stderr,
+                "No internet - skipping RTC sync.\n");
         return 1;
     }
 
     sync_ntp();
 
     time_t now = time(NULL);
+
     struct tm tmval;
 
     if (localtime_r(&now, &tmval) == NULL)
     {
-        fprintf(stderr, "localtime_r failed\n");
+        fprintf(stderr,
+                "localtime_r failed\n");
         return 1;
     }
 
-    uint8_t sec = (uint8_t)tmval.tm_sec;
-    uint8_t min_ = (uint8_t)tmval.tm_min;
-    uint8_t hour = (uint8_t)tmval.tm_hour;
-    uint8_t day = (uint8_t)tmval.tm_mday;
+    uint8_t sec   = (uint8_t)tmval.tm_sec;
+    uint8_t min_  = (uint8_t)tmval.tm_min;
+    uint8_t hour  = (uint8_t)tmval.tm_hour;
+    uint8_t day   = (uint8_t)tmval.tm_mday;
     uint8_t month = (uint8_t)(tmval.tm_mon + 1);
-    uint8_t year = (uint8_t)(tmval.tm_year + 1900 - 2000);
-    uint8_t dow = (uint8_t)(tmval.tm_wday == 0 ? 7 : tmval.tm_wday);
+    uint8_t year  = (uint8_t)(tmval.tm_year + 1900 - 2000);
+    uint8_t dow   = (uint8_t)(tmval.tm_wday == 0 ? 7 : tmval.tm_wday);
 
     uint32_t time_packed =
         ((uint32_t)hour << 16) |
@@ -217,10 +262,17 @@ int rtc_main(void)
         day;
 
     printf("System time: 20%02u-%02u-%02u %02u:%02u:%02u (DOW=%u)\n",
-           year, month, day, hour, min_, sec, dow);
+           year,
+           month,
+           day,
+           hour,
+           min_,
+           sec,
+           dow);
 
     printf("Packed: time=0x%08X date=0x%08X\n",
-           time_packed, date_packed);
+           time_packed,
+           date_packed);
 
     if (map_retram() != 0)
     {
