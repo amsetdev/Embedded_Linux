@@ -32,10 +32,10 @@
 #include "cJSON.h"
 
 /* ─── CONFIG ──────────────────────────────────────────────────────────────── */
-#define MQTT_BROKER     "3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud"
+#define MQTT_BROKER     "7359f3e4307b49da983c4ee903a669d5.s1.eu.hivemq.cloud"
 #define MQTT_PORT       8883
 #define MQTT_USERNAME   "prasad"
-#define MQTT_PASSWORD   "prasad#12$A"
+#define MQTT_PASSWORD   "prasad#12"
 #define CLIENT_ID       "stm32-terminal-agent"
 
 #define TOPIC_INPUT     "data/terminal/input"

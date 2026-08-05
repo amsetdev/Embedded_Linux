@@ -22,10 +22,10 @@ import signal
 import paho.mqtt.client as mqtt
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
-MQTT_BROKER      = '3040e50ebdbb4f949b7ec9480b0a0326.s1.eu.hivemq.cloud'
+MQTT_BROKER      = '7359f3e4307b49da983c4ee903a669d5.s1.eu.hivemq.cloud'
 MQTT_PORT        = 8883
 MQTT_USERNAME    = 'prasad'
-MQTT_PASSWORD    = 'prasad#12$A'
+MQTT_PASSWORD    = 'prasad#12'
 TOPIC_INPUT      = 'data/terminal/input'
 TOPIC_OUTPUT     = 'data/terminal/output'
 BOARD_NAME       = 'stm32mp1'
