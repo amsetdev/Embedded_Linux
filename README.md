@@ -43,7 +43,7 @@ docker build -t stm32mp1-build .
 
 # 3. Build the project
 docker run --rm -v ${PWD}:/project stm32mp1-build
-```
+
 
 The ARM binary is output at `build/main`.
 

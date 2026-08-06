@@ -52,7 +52,7 @@ LDFLAGS_OTA := -L/usr/lib/arm-linux-gnueabihf \
                -lmosquitto -lpthread -lssl -lcrypto -lcurl -ldl -lz -lm
 
 BOARD_USER := root
-BOARD_IP   := 192.168.137.116
+BOARD_IP   := 192.168.137.150
 BOARD_DIR  := /home/root/edb_c/linking/
 
 .PHONY: all clean deploy flash
@@ -70,14 +70,13 @@ $(OTA_TARGET): $(OTA_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS_OTA)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/%.o: $(OTA_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/%.o: $(VENDOR_DIR)/%.c
-	$(CC) $(CFLAGS) -c -o $@ $
-
+	$(CC) $(CFLAGS) -c -o $@ $<
 clean:
 	rm -rf $(BUILD_DIR)
 	@echo " Cleaned"

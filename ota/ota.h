@@ -2,37 +2,37 @@
  * @file ota.h
  * @brief Over-The-Air (OTA) Update Service
  *
+ * OTA runs as an independent background daemon (ota_service),
+ * separate from the main gateway application. It keeps its own
+ * MQTT session to ThingsBoard and reacts to RPC commands.
+ *
  * OTA workflow:
  *
- * ThingsBoard RPC
- *        │
- *        ▼
- * MQTT Update Command
- *        │
- *        ▼
- * Download latest.json
- *        │
- *        ▼
- * Compare Version
- *        │
- *        ▼
- * Download Firmware
- *        │
- *        ▼
- * Verify SHA256
- *        │
- *        ▼
+ * ThingsBoard RPC ("fw_update")
+ *        |
+ *        v
+ * ACK request immediately (RPC has a short timeout)
+ *        |
+ *        v
+ * Spawn update worker thread
+ *        |
+ *        v
+ * Download latest.json -> Compare Version
+ *        |
+ *        v
+ * Download Firmware + SHA256 -> Verify
+ *        |
+ *        v
  * Backup Current Application
- *        │
- *        ▼
+ *        |
+ *        v
  * Install New Version
- *        │
- *        ▼
- * Restart gateway.service
- *        │
- *        ├── Success
- *        │
- *        └── Rollback (if health check fails)
+ *        |
+ *        v
+ * Restart gateway.service (or reboot board)
+ *        |
+ *        +-- Health check OK   -> SUCCESS
+ *        +-- Health check FAIL -> Rollback -> FAILED
  */
 
 #ifndef OTA_H
@@ -58,6 +58,7 @@ extern "C" {
 #define OTA_PATH_LEN         256
 #define OTA_TOPIC_LEN        128
 #define OTA_STATUS_LEN       64
+#define OTA_REQID_LEN        64
 
 /*=============================================================
  * OTA States
@@ -96,11 +97,17 @@ typedef struct
 
     char backup_directory[OTA_PATH_LEN];
 
-    char mqtt_host[128];
+char mqtt_host[128];
+int mqtt_port;
+char mqtt_username[64];
+char mqtt_password[64];
+char mqtt_client_id[64];
+char mqtt_topic[128];
 
-    int mqtt_port;
-
-    char mqtt_token[128];
+    /* If true, reboot the whole STM32MP1 board after a successful
+     * install. If false (default) only "gateway.service" is
+     * restarted via systemd, which is faster and less disruptive. */
+    bool reboot_after_update;
 
 } ota_config_t;
 
@@ -142,13 +149,21 @@ typedef struct
 
     ota_state_t state;
 
-    pthread_t thread;
+    pthread_t thread;          /* MQTT / RPC listener thread   */
+
+    pthread_t worker_thread;   /* update pipeline worker thread */
+
+    pthread_mutex_t lock;      /* guards update_in_progress/mosq */
 
     bool running;
 
     bool mqtt_connected;
 
     bool update_requested;
+
+    bool update_in_progress;
+
+    char pending_req_id[OTA_REQID_LEN];
 
     struct mosquitto *mosq;
 
@@ -158,60 +173,58 @@ typedef struct
  * Public API
  *============================================================*/
 
-/**
- * Initialize OTA service.
- */
 int ota_init(void);
 
-/**
- * Start OTA background thread.
- */
 int ota_start(void);
 
-/**
- * Stop OTA service.
- */
 void ota_stop(void);
 
-/**
- * Get current OTA state.
- */
 ota_state_t ota_get_state(void);
 
-/**
- * Convert state to string.
- */
 const char *ota_state_string(ota_state_t state);
 
-/**
- * Return OTA context.
- */
 ota_context_t *ota_get_context(void);
 
+int ota_read_current_version(void);
+
 /**
- * Read installed firmware version.
+ * Compare two "major.minor.patch" version strings.
+ * @retval  1  latest > current (update available)
+ * @retval  0  latest == current
+ * @retval -1  latest < current, or a parse error occurred
  */
-int ota_read_version(char *version,
-                     uint32_t size);
+int ota_compare_version(const char *current, const char *latest);
+
+/**
+ * Thread-safe publish helper used by every OTA module.
+ * Publishes `payload` on `topic` using the OTA service's own
+ * mosquitto client (g_ota.mosq). This is intentionally distinct
+ * from the main gateway's mqtt_publish() in src/mqtt.c, because
+ * the OTA service is a separate process with its own MQTT session.
+ *
+ * @retval 0  Success
+ * @retval -1 Not connected / publish failed
+ */
+int ota_mqtt_publish(const char *topic, const char *payload);
 
 /*=============================================================
- * MQTT Status Publishing
+ * MQTT Status Publishing (ThingsBoard telemetry topics)
  *============================================================*/
 
-/**
- * Publish OTA status.
- */
 int ota_publish_status(const char *status);
 
-/**
- * Publish OTA download progress.
- */
 int ota_publish_progress(int percent);
 
-/**
- * Publish OTA result.
- */
 int ota_publish_result(bool success);
+
+/**
+ * Run the full download -> verify -> install -> restart pipeline.
+ * Safe to call from the worker thread only.
+ *
+ * @retval 0  Success (or already up to date)
+ * @retval -1 Failure (state left as OTA_STATE_FAILED)
+ */
+int ota_execute_update(void);
 
 #ifdef __cplusplus
 }

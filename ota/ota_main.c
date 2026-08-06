@@ -1,9 +1,19 @@
+/**
+ * @file ota_main.c
+ * @brief Entry point for the standalone ota_service daemon.
+ *
+ * Runs independently of the main "gateway" application/service.
+ * Intended to be started as its own systemd unit (see
+ * ota-service.service) so it keeps listening for ThingsBoard RPC
+ * commands even while the gateway app itself is being replaced.
+ */
+
 #include "ota.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
 
-static volatile int keep_running = 1;
+static volatile sig_atomic_t keep_running = 1;
 
 static void handle_signal(int sig)
 {

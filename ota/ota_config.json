@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "check_interval": 3600,
+  "latest_url": "https://raw.githubusercontent.com/your-org/gateway-releases/main/latest.json",
+  "download_directory": "./update",
+  "backup_directory": "./backup",
+  "mqtt_host": "thingsboard.example.com",
+  "mqtt_port": 8883,
+  "mqtt_token": "DEVICE_ACCESS_TOKEN",
+  "reboot_after_update": false
+}

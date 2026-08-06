@@ -2,21 +2,19 @@
  * @file ota.c
  * @brief OTA Service Manager
  *
- * This module implements the OTA manager for the Smart Gateway.
- * It is responsible for:
+ * This module is the heart of the standalone OTA daemon
+ * (ota_service), which runs independently from the main
+ * gateway application. Responsibilities:
  *
  *  - OTA initialization
- *  - ThingsBoard MQTT communication
+ *  - ThingsBoard MQTT session (own client, own credentials)
+ *  - RPC command handling ("fw_update")
  *  - OTA state machine
  *  - Firmware version management
- *  - OTA worker thread
- *  - Executing firmware updates
+ *  - Update worker thread (download/verify/backup/install/restart)
  *
- * Network download operations are implemented in
- * ota_network.c.
- *
- * Installation and rollback are implemented in
- * ota_install.c.
+ * Network download operations live in ota_network.c.
+ * Installation and rollback live in ota_install.c.
  */
 
 #include "ota.h"
@@ -24,6 +22,7 @@
 #include "ota_network.h"
 #include "ota_config.h"
 #include "ota_install.h"
+#include "mqtt.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,14 +33,12 @@
 #include <sys/stat.h>
 
 #include <mosquitto.h>
+#include <cjson/cJSON.h>
 
 /*=============================================================
  *                 Private Variables
  *============================================================*/
 
-/**
- * @brief Global OTA context.
- */
 static ota_context_t g_ota;
 
 /*=============================================================
@@ -49,31 +46,20 @@ static ota_context_t g_ota;
  *============================================================*/
 
 static void *ota_thread(void *arg);
-
-static int ota_execute_update(void);
+static void *ota_update_worker(void *arg);
 
 static int ota_mqtt_connect(void);
-
 static void ota_mqtt_disconnect(void);
-
 static int ota_mqtt_subscribe(void);
 
-static void ota_on_connect(struct mosquitto *mosq,
-                           void *userdata,
-                           int rc);
+static void ota_on_connect(struct mosquitto *mosq, void *userdata, int rc);
+static void ota_on_disconnect(struct mosquitto *mosq, void *userdata, int rc);
+static void ota_on_message(struct mosquitto *mosq, void *userdata,
+                            const struct mosquitto_message *msg);
 
-static void ota_on_disconnect(struct mosquitto *mosq,
-                              void *userdata,
-                              int rc);
-
-static  void ota_on_message(struct mosquitto *mosq,
-                           void *userdata,
-                           const struct mosquitto_message *msg);
-
-  int ota_read_current_version(void);
-
-  int ota_compare_version(const char *current,
-                               const char *latest);
+static void ota_set_state(ota_state_t state);
+static void ota_reset_info(void);
+static int ota_create_client(void);
 
 /*=============================================================
  *               Public Helper Functions
@@ -84,52 +70,23 @@ ota_context_t *ota_get_context(void)
     return &g_ota;
 }
 
-/*=============================================================
- *              OTA State String
- *============================================================*/
-
 const char *ota_state_string(ota_state_t state)
 {
     switch (state)
     {
-        case OTA_STATE_IDLE:
-            return "IDLE";
-
-        case OTA_STATE_CONNECTING:
-            return "CONNECTING";
-
-        case OTA_STATE_WAITING:
-            return "WAITING";
-
-        case OTA_STATE_CHECKING:
-            return "CHECKING";
-
-        case OTA_STATE_DOWNLOADING:
-            return "DOWNLOADING";
-
-        case OTA_STATE_VERIFYING:
-            return "VERIFYING";
-
-        case OTA_STATE_BACKUP:
-            return "BACKUP";
-
-        case OTA_STATE_INSTALLING:
-            return "INSTALLING";
-
-        case OTA_STATE_RESTARTING:
-            return "RESTARTING";
-
-        case OTA_STATE_SUCCESS:
-            return "SUCCESS";
-
-        case OTA_STATE_FAILED:
-            return "FAILED";
-
-        case OTA_STATE_ROLLBACK:
-            return "ROLLBACK";
-
-        default:
-            return "UNKNOWN";
+        case OTA_STATE_IDLE:        return "IDLE";
+        case OTA_STATE_CONNECTING:  return "CONNECTING";
+        case OTA_STATE_WAITING:     return "WAITING";
+        case OTA_STATE_CHECKING:    return "CHECKING";
+        case OTA_STATE_DOWNLOADING: return "DOWNLOADING";
+        case OTA_STATE_VERIFYING:   return "VERIFYING";
+        case OTA_STATE_BACKUP:      return "BACKUP";
+        case OTA_STATE_INSTALLING:  return "INSTALLING";
+        case OTA_STATE_RESTARTING:  return "RESTARTING";
+        case OTA_STATE_SUCCESS:     return "SUCCESS";
+        case OTA_STATE_FAILED:      return "FAILED";
+        case OTA_STATE_ROLLBACK:    return "ROLLBACK";
+        default:                    return "UNKNOWN";
     }
 }
 
@@ -137,31 +94,17 @@ const char *ota_state_string(ota_state_t state)
  *           Read Current Firmware Version
  *============================================================*/
 
-/**
- * @brief Read installed firmware version.
- *
- * Reads version.txt from the application directory.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
- int ota_read_current_version(void)
+int ota_read_current_version(void)
 {
-    FILE *fp;
-
-    fp = fopen(OTA_VERSION_FILE, "r");
+    FILE *fp = fopen(OTA_VERSION_FILE, "r");
 
     if (fp == NULL)
     {
-        printf("OTA: Unable to open %s\n",
-               OTA_VERSION_FILE);
-
+        printf("OTA: Unable to open %s\n", OTA_VERSION_FILE);
         return -1;
     }
 
-    if (fgets(g_ota.info.current_version,
-              sizeof(g_ota.info.current_version),
-              fp) == NULL)
+    if (fgets(g_ota.info.current_version, sizeof(g_ota.info.current_version), fp) == NULL)
     {
         fclose(fp);
         return -1;
@@ -169,90 +112,58 @@ const char *ota_state_string(ota_state_t state)
 
     fclose(fp);
 
-    g_ota.info.current_version[
-        strcspn(g_ota.info.current_version, "\r\n")
-    ] = '\0';
+    g_ota.info.current_version[strcspn(g_ota.info.current_version, "\r\n")] = '\0';
 
-    printf("OTA: Current Version : %s\n",
-           g_ota.info.current_version);
+    printf("OTA: Current Version : %s\n", g_ota.info.current_version);
 
     return 0;
 }
-
 
 /*=============================================================
  *                 OTA Initialization
  *============================================================*/
 
-/**
- * @brief Initialize OTA service.
- *
- * Initializes:
- * - OTA context
- * - OTA configuration
- * - Current firmware version
- * - Mosquitto library
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_init(void)
 {
     memset(&g_ota, 0, sizeof(g_ota));
 
     g_ota.state = OTA_STATE_IDLE;
 
+    pthread_mutex_init(&g_ota.lock, NULL);
+
     printf("\n========================================\n");
     printf("        OTA SERVICE INITIALIZATION\n");
     printf("========================================\n");
 
-    /* Load configuration */
     if (ota_load_config() != 0)
     {
         printf("OTA: Failed to load configuration\n");
         return -1;
     }
 
-    /*
-     * Store configuration locally.
-     *
-     * ota_load_config() should return
-     * the configuration structure or
-     * fill g_ota.config directly depending
-     * on your implementation.
-     */
+    /* Ensure working directories exist (first boot / fresh image). */
+    mkdir(OTA_UPDATE_DIRECTORY, 0755);
+    mkdir(OTA_BACKUP_DIRECTORY, 0755);
+    mkdir(OTA_TEMP_DIRECTORY, 0755);
 
-    /* Read installed version */
     if (ota_read_current_version() != 0)
     {
         printf("OTA: Failed to read current version\n");
         return -1;
     }
 
-    printf("Current Version : %s\n",
-           g_ota.info.current_version);
-
     mosquitto_lib_init();
 
     printf("Mosquitto Library Initialized\n");
-
     printf("OTA Initialization Complete\n\n");
 
     return 0;
 }
 
 /*=============================================================
- *               Start OTA Service
+ *               Start / Stop OTA Service
  *============================================================*/
 
-/**
- * @brief Start OTA background service.
- *
- * Creates OTA worker thread.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_start(void)
 {
     if (g_ota.running)
@@ -263,15 +174,10 @@ int ota_start(void)
 
     g_ota.running = true;
 
-    if (pthread_create(&g_ota.thread,
-                       NULL,
-                       ota_thread,
-                       NULL) != 0)
+    if (pthread_create(&g_ota.thread, NULL, ota_thread, NULL) != 0)
     {
         printf("OTA: Thread Creation Failed\n");
-
         g_ota.running = false;
-
         return -1;
     }
 
@@ -280,13 +186,6 @@ int ota_start(void)
     return 0;
 }
 
-/*=============================================================
- *                Stop OTA Service
- *============================================================*/
-
-/**
- * @brief Stop OTA service.
- */
 void ota_stop(void)
 {
     if (!g_ota.running)
@@ -300,103 +199,63 @@ void ota_stop(void)
 
     pthread_join(g_ota.thread, NULL);
 
-    ota_mqtt_disconnect();
+    pthread_mutex_lock(&g_ota.lock);
+    bool update_running = g_ota.update_in_progress;
+    pthread_mutex_unlock(&g_ota.lock);
 
+    if (update_running)
+    {
+        /* Let an in-flight firmware update finish rather than
+         * tearing down mid-install, which could brick the board. */
+        printf("OTA: Waiting for in-progress update to finish...\n");
+        pthread_join(g_ota.worker_thread, NULL);
+    }
+
+    ota_mqtt_disconnect();
     mosquitto_lib_cleanup();
+    pthread_mutex_destroy(&g_ota.lock);
 
     printf("OTA Service Stopped\n");
 }
 
-/*=============================================================
- *             Get Current OTA State
- *============================================================*/
-
-/**
- * @brief Return current OTA state.
- *
- * @return OTA state.
- */
 ota_state_t ota_get_state(void)
 {
     return g_ota.state;
 }
 
 /*=============================================================
- *            Update OTA State
+ *            State / Info helpers
  *============================================================*/
 
-/**
- * @brief Change OTA state.
- *
- * @param state New state.
- */
 static void ota_set_state(ota_state_t state)
 {
     g_ota.state = state;
 
-    printf("OTA State -> %s\n",
-           ota_state_string(state));
+    printf("OTA State -> %s\n", ota_state_string(state));
 
-    ota_publish_status(
-        ota_state_string(state));
+    ota_publish_status(ota_state_string(state));
 }
 
-/*=============================================================
- *          Reset OTA Information
- *============================================================*/
-
-/**
- * @brief Reset OTA runtime information.
- */
 static void ota_reset_info(void)
 {
-    memset(&g_ota.info.latest_version,
-           0,
-           sizeof(g_ota.info.latest_version));
-
-    memset(&g_ota.info.package_name,
-           0,
-           sizeof(g_ota.info.package_name));
-
-    memset(&g_ota.info.package_url,
-           0,
-           sizeof(g_ota.info.package_url));
-
-    memset(&g_ota.info.sha256_url,
-           0,
-           sizeof(g_ota.info.sha256_url));
-
-    memset(&g_ota.info.sha256,
-           0,
-           sizeof(g_ota.info.sha256));
-
-    memset(&g_ota.info.package_path,
-           0,
-           sizeof(g_ota.info.package_path));
-
-    memset(&g_ota.info.backup_path,
-           0,
-           sizeof(g_ota.info.backup_path));
+    memset(&g_ota.info.latest_version, 0, sizeof(g_ota.info.latest_version));
+    memset(&g_ota.info.package_name, 0, sizeof(g_ota.info.package_name));
+    memset(&g_ota.info.package_url, 0, sizeof(g_ota.info.package_url));
+    memset(&g_ota.info.sha256_url, 0, sizeof(g_ota.info.sha256_url));
+    memset(&g_ota.info.sha256, 0, sizeof(g_ota.info.sha256));
+    memset(&g_ota.info.package_path, 0, sizeof(g_ota.info.package_path));
+    memset(&g_ota.info.backup_path, 0, sizeof(g_ota.info.backup_path));
 
     g_ota.info.update_available = false;
 }
 
 /*=============================================================
- *            MQTT Initialization
+ *            MQTT client / connection management
  *============================================================*/
 
-/**
- * @brief Create MQTT client.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 static int ota_create_client(void)
 {
-    g_ota.mosq =
-        mosquitto_new(NULL,
-                      true,
-                      &g_ota);
+    g_ota.mosq = mosquitto_new(NULL, true, &g_ota);
 
     if (g_ota.mosq == NULL)
     {
@@ -404,34 +263,137 @@ static int ota_create_client(void)
         return -1;
     }
 
-    mosquitto_connect_callback_set(
-        g_ota.mosq,
-        ota_on_connect);
+    /* The update worker thread publishes status/progress/result
+     * concurrently with mosquitto_loop() running on ota_thread,
+     * so the client must be thread-safe. */
+    mosquitto_threaded_set(g_ota.mosq, true);
 
-    mosquitto_disconnect_callback_set(
-        g_ota.mosq,
-        ota_on_disconnect);
+    mosquitto_connect_callback_set(g_ota.mosq, ota_on_connect);
+    mosquitto_disconnect_callback_set(g_ota.mosq, ota_on_disconnect);
+    mosquitto_message_callback_set(g_ota.mosq, ota_on_message);
 
-    mosquitto_message_callback_set(
+    return 0;
+}
+
+static int ota_mqtt_connect(void)
+{
+    ota_set_state(OTA_STATE_CONNECTING);
+
+
+  int  rc = mosquitto_username_pw_set(
         g_ota.mosq,
-        ota_on_message);
+        g_ota.config.mqtt_username,
+        g_ota.config.mqtt_password);
+
+if (rc != MOSQ_ERR_SUCCESS)
+{
+    printf("OTA: Username/password set failed (%s)\n",
+           mosquitto_strerror(rc));
+    return -1;
+}
+
+    mosquitto_tls_opts_set(g_ota.mosq, 1, NULL, NULL);
+
+    rc = mosquitto_connect(g_ota.mosq, g_ota.config.mqtt_host, g_ota.config.mqtt_port, 60);
+
+    if (rc != MOSQ_ERR_SUCCESS)
+    {
+        printf("OTA: Connect failed (%d)\n", rc);
+        return -1;
+    }
+
+    printf("OTA: Connected to broker\n");
+
+    return 0;
+}
+
+static void ota_mqtt_disconnect(void)
+{
+    if (g_ota.mosq != NULL)
+    {
+        mosquitto_disconnect(g_ota.mosq);
+    }
+
+    g_ota.mqtt_connected = false;
+}
+
+static int ota_mqtt_subscribe(void)
+{
+    int rc = mosquitto_subscribe(
+        g_ota.mosq,
+        NULL,
+        g_ota.config.mqtt_topic,
+        1);
+
+    if (rc != MOSQ_ERR_SUCCESS)
+    {
+        printf("OTA: Subscribe failed\n");
+        return -1;
+    }
+
+    ota_set_state(OTA_STATE_WAITING);
+
+    printf("OTA: Waiting for OTA command...\n");
 
     return 0;
 }
 
 /*=============================================================
- *                 OTA Worker Thread
+ *          Thread-safe publish helper (used everywhere)
  *============================================================*/
 
-/**
- * @brief OTA background thread.
- *
- * Connects to ThingsBoard and waits for OTA commands.
- *
- * @param arg Unused.
- *
- * @return NULL
- */
+int ota_mqtt_publish(const char *topic, const char *payload)
+{
+    int rc;
+
+    pthread_mutex_lock(&g_ota.lock);
+
+    if (g_ota.mosq == NULL || !g_ota.mqtt_connected)
+    {
+        pthread_mutex_unlock(&g_ota.lock);
+        return -1;
+    }
+
+    rc = mosquitto_publish(g_ota.mosq, NULL, topic,
+                            (int)strlen(payload), payload, 1, false);
+
+    pthread_mutex_unlock(&g_ota.lock);
+
+    return (rc == MOSQ_ERR_SUCCESS) ? 0 : -1;
+}
+
+int ota_publish_status(const char *status)
+{
+    char payload[128];
+
+    snprintf(payload, sizeof(payload), "{\"state\":\"%s\"}", status);
+
+    return ota_mqtt_publish("gateway/ota/status", payload);
+}
+
+int ota_publish_progress(int percent)
+{
+    char payload[64];
+
+    snprintf(payload, sizeof(payload), "{\"progress\":%d}", percent);
+
+    return ota_mqtt_publish("gateway/ota/progress", payload);
+}
+
+int ota_publish_result(bool success)
+{
+    char payload[128];
+
+    snprintf(payload, sizeof(payload), "{\"result\":\"%s\"}",
+             success ? "SUCCESS" : "FAILED");
+
+    return ota_mqtt_publish("gateway/ota/result", payload);
+}
+
+/*=============================================================
+ *                 OTA Worker Thread (MQTT / RPC)
+ *============================================================*/
+
 static void *ota_thread(void *arg)
 {
     (void)arg;
@@ -457,6 +419,10 @@ static void *ota_thread(void *arg)
             ota_mqtt_subscribe();
         }
 
+        /* Keeps the keepalive/PINGREQ alive and delivers incoming
+         * RPC messages. The actual firmware update runs on a
+         * separate worker thread so this loop is never blocked
+         * by a multi-minute download. */
         mosquitto_loop(g_ota.mosq, 1000, 1);
 
         usleep(100000);
@@ -469,122 +435,10 @@ static void *ota_thread(void *arg)
 }
 
 /*=============================================================
- *                 MQTT Connection
+ *              MQTT Callbacks
  *============================================================*/
 
-/**
- * @brief Connect to ThingsBoard.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
-static int ota_mqtt_connect(void)
-{
-    ota_set_state(OTA_STATE_CONNECTING);
-
-    int rc = mosquitto_username_pw_set(
-                    g_ota.mosq,
-                    g_ota.config.mqtt_token,
-                    NULL);
-
-    if (rc != MOSQ_ERR_SUCCESS)
-    {
-        printf("OTA: Username set failed\n");
-        return -1;
-    }
-
-    rc = mosquitto_tls_set(g_ota.mosq,
-                           "/etc/ssl/certs/ca-certificates.crt",
-                           NULL,
-                           NULL,
-                           NULL,
-                           NULL);
-
-    if (rc != MOSQ_ERR_SUCCESS)
-    {
-        printf("OTA: TLS set failed (%d)\n", rc);
-        return -1;
-    }
-
-    mosquitto_tls_opts_set(g_ota.mosq, 1, NULL, NULL);
-
-    rc = mosquitto_connect(
-                g_ota.mosq,
-                g_ota.config.mqtt_host,
-                g_ota.config.mqtt_port,
-                60);
-
-    if (rc != MOSQ_ERR_SUCCESS)
-    {
-        printf("OTA: Connect failed (%d)\n", rc);
-        return -1;
-    }
-
-    printf("OTA: Connected to broker\n");
-
-    return 0;
-}
-
-/*=============================================================
- *                MQTT Disconnect
- *============================================================*/
-
-/**
- * @brief Disconnect MQTT.
- */
-static void ota_mqtt_disconnect(void)
-{
-    if (g_ota.mosq != NULL)
-    {
-        mosquitto_disconnect(g_ota.mosq);
-    }
-
-    g_ota.mqtt_connected = false;
-}
-
-/*=============================================================
- *                 Subscribe RPC Topic
- *============================================================*/
-
-/**
- * @brief Subscribe to ThingsBoard RPC topic.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
-static int ota_mqtt_subscribe(void)
-{
-    int rc;
-
-    rc = mosquitto_subscribe(
-            g_ota.mosq,
-            NULL,
-            "v1/devices/me/rpc/request/+",
-            1);
-
-    if (rc != MOSQ_ERR_SUCCESS)
-    {
-        printf("OTA: Subscribe failed\n");
-        return -1;
-    }
-
-    ota_set_state(OTA_STATE_WAITING);
-
-    printf("OTA: Waiting for OTA command...\n");
-
-    return 0;
-}
-
-/*=============================================================
- *              MQTT Connect Callback
- *============================================================*/
-
-/**
- * @brief MQTT connected callback.
- */
-static void ota_on_connect(struct mosquitto *mosq,
-                           void *userdata,
-                           int rc)
+static void ota_on_connect(struct mosquitto *mosq, void *userdata, int rc)
 {
     (void)mosq;
     (void)userdata;
@@ -592,7 +446,6 @@ static void ota_on_connect(struct mosquitto *mosq,
     if (rc == 0)
     {
         g_ota.mqtt_connected = true;
-
         printf("OTA: MQTT Connected\n");
     }
     else
@@ -601,146 +454,261 @@ static void ota_on_connect(struct mosquitto *mosq,
     }
 }
 
-/*=============================================================
- *           MQTT Disconnect Callback
- *============================================================*/
-
-/**
- * @brief MQTT disconnected callback.
- */
-static void ota_on_disconnect(struct mosquitto *mosq,
-                              void *userdata,
-                              int rc)
+static void ota_on_disconnect(struct mosquitto *mosq, void *userdata, int rc)
 {
     (void)mosq;
     (void)userdata;
     (void)rc;
 
     g_ota.mqtt_connected = false;
-
     printf("OTA: MQTT Disconnected\n");
 }
 
-/*=============================================================
- *               MQTT Message Callback
- *============================================================*/
-
 /**
- * @brief Receive OTA RPC command.
+ * @brief Receive OTA RPC command from ThingsBoard.
  *
- * Expected payload:
+ * Expected ThingsBoard two-way RPC payload:
+ *   { "method": "fw_update", "params": {} }
  *
- * {
- *     "method":"fw_update"
- * }
+ * ThingsBoard RPC calls time out after a few seconds, so this
+ * callback never runs the update itself. It:
+ *   1. Parses/validates the request with cJSON.
+ *   2. Immediately ACKs on the RPC response topic.
+ *   3. Hands off to a worker thread that runs the full pipeline
+ *      and reports progress/result on the gateway/ota status topics.
  */
-static void ota_on_message(struct mosquitto *mosq,
-                           void *userdata,
-                           const struct mosquitto_message *msg)
+static void ota_on_message(struct mosquitto *mosq, void *userdata,
+                            const struct mosquitto_message *msg)
 {
     (void)userdata;
 
-    if (msg == NULL) return;
+    if (msg == NULL || msg->payload == NULL)
+    {
+        return;
+    }
 
-    printf("\nOTA RPC Received\nTopic   : %s\nPayload : %s\n",
-           msg->topic, (char *)msg->payload);
+    printf("\nOTA RPC Received\nTopic   : %s\nPayload : %.*s\n",
+           msg->topic, msg->payloadlen, (char *)msg->payload);
 
     const char *prefix = "v1/devices/me/rpc/request/";
+
     if (strncmp(msg->topic, prefix, strlen(prefix)) != 0)
+    {
         return;
+    }
+
     const char *req_id = msg->topic + strlen(prefix);
 
-    if (strstr((char *)msg->payload, "fw_update") == NULL)
+    cJSON *root = cJSON_ParseWithLength((char *)msg->payload, (size_t)msg->payloadlen);
+
+    if (root == NULL)
+    {
+        printf("OTA: RPC payload is not valid JSON\n");
         return;
+    }
+
+    cJSON *method = cJSON_GetObjectItem(root, "method");
+
+    if (!cJSON_IsString(method) || strcmp(method->valuestring, "fw_update") != 0)
+    {
+        cJSON_Delete(root);
+        return; /* not an OTA command, ignore */
+    }
+
+    cJSON_Delete(root);
+
+    char resp_topic[OTA_TOPIC_LEN];
+    snprintf(resp_topic, sizeof(resp_topic), "v1/devices/me/rpc/response/%s", req_id);
+
+    pthread_mutex_lock(&g_ota.lock);
+
+    if (g_ota.update_in_progress)
+    {
+        pthread_mutex_unlock(&g_ota.lock);
+
+        printf("OTA: Update already in progress, ignoring new request\n");
+
+        const char *busy = "{\"status\":\"busy\"}";
+        mosquitto_publish(mosq, NULL, resp_topic, (int)strlen(busy), busy, 1, false);
+        return;
+    }
+
+    g_ota.update_in_progress = true;
+    strncpy(g_ota.pending_req_id, req_id, sizeof(g_ota.pending_req_id) - 1);
+
+    pthread_mutex_unlock(&g_ota.lock);
 
     printf("OTA Update Requested (reqId=%s)\n", req_id);
 
-    int rc = ota_execute_update();
+    /* Ack right away so the RPC call doesn't time out on the
+     * ThingsBoard side; the real result follows asynchronously
+     * on gateway/ota/result once the pipeline finishes. */
+    const char *ack = "{\"status\":\"started\"}";
+    mosquitto_publish(mosq, NULL, resp_topic, (int)strlen(ack), ack, 1, false);
 
-    char resp_topic[128];
-    snprintf(resp_topic, sizeof(resp_topic),
-             "v1/devices/me/rpc/response/%s", req_id);
+    if (pthread_create(&g_ota.worker_thread, NULL, ota_update_worker, NULL) != 0)
+    {
+        printf("OTA: Failed to spawn update worker thread\n");
 
-    const char *resp_payload = (rc == 0)
-        ? "{\"status\":\"ok\"}"
-        : "{\"status\":\"failed\"}";
-
-    mosquitto_publish(mosq, NULL, resp_topic,
-                      (int)strlen(resp_payload), resp_payload, 1, false);
-
-    printf(rc == 0 ? "OTA Update Completed\n" : "OTA Update Failed\n");
+        pthread_mutex_lock(&g_ota.lock);
+        g_ota.update_in_progress = false;
+        pthread_mutex_unlock(&g_ota.lock);
+    }
+    else
+    {
+        pthread_detach(g_ota.worker_thread);
+    }
 }
 
-int ota_compare_version(const char *current,
-                        const char *latest)
+/*=============================================================
+ *                 Version Comparison
+ *============================================================*/
+
+int ota_compare_version(const char *current, const char *latest)
 {
     int c_major, c_minor, c_patch;
     int l_major, l_minor, l_patch;
 
-    if (sscanf(current, "%d.%d.%d",
-               &c_major,
-               &c_minor,
-               &c_patch) != 3)
+    if (sscanf(current, "%d.%d.%d", &c_major, &c_minor, &c_patch) != 3)
     {
         return -1;
     }
 
-    if (sscanf(latest, "%d.%d.%d",
-               &l_major,
-               &l_minor,
-               &l_patch) != 3)
+    if (sscanf(latest, "%d.%d.%d", &l_major, &l_minor, &l_patch) != 3)
     {
         return -1;
     }
 
-    if (l_major > c_major)
-        return 1;
-
-    if (l_major < c_major)
-        return -1;
-
-    if (l_minor > c_minor)
-        return 1;
-
-    if (l_minor < c_minor)
-        return -1;
-
-    if (l_patch > c_patch)
-        return 1;
-
-    if (l_patch < c_patch)
-        return -1;
+    if (l_major != c_major) return (l_major > c_major) ? 1 : -1;
+    if (l_minor != c_minor) return (l_minor > c_minor) ? 1 : -1;
+    if (l_patch != c_patch) return (l_patch > c_patch) ? 1 : -1;
 
     return 0;
 }
 
+/*=============================================================
+ *      Update Worker Thread - full OTA pipeline
+ *============================================================*/
+
+static void *ota_update_worker(void *arg)
+{
+    (void)arg;
+
+    int result = ota_execute_update();
+
+    ota_publish_result(result == 0);
+
+    pthread_mutex_lock(&g_ota.lock);
+    g_ota.update_in_progress = false;
+    pthread_mutex_unlock(&g_ota.lock);
+
+    return NULL;
+}
+
 int ota_execute_update(void)
 {
-    if (ota_download_latest_json() != 0)
-        return -1;
-
-    if (ota_parse_latest_json() != 0)
-        return -1;
-
     ota_context_t *ctx = ota_get_context();
+
+    /* ota_reset_info() clears stale latest_version/urls/hash from any
+     * previous cycle without touching current_version. */
+    ota_reset_info();
+
+    ota_set_state(OTA_STATE_CHECKING);
+
+    if (ota_download_latest_json() != 0 || ota_parse_latest_json() != 0)
+    {
+        ota_set_state(OTA_STATE_FAILED);
+        return -1;
+    }
 
     if (!ctx->info.update_available)
     {
         printf("OTA: Already running latest version.\n");
+        ota_set_state(OTA_STATE_IDLE);
         return 0;
     }
 
-    if (ota_download_package() != 0)
-        return -1;
+    /* ---- Download & verify ---- */
+    ota_set_state(OTA_STATE_DOWNLOADING);
 
-    if (ota_download_sha256() != 0)
+    if (ota_download_package() != 0 || ota_download_sha256() != 0)
+    {
+        ota_set_state(OTA_STATE_FAILED);
         return -1;
+    }
+
+    ota_set_state(OTA_STATE_VERIFYING);
 
     if (ota_verify_package() != 0)
+    {
+        ota_set_state(OTA_STATE_FAILED);
         return -1;
+    }
+
+    /* ---- Backup current install before touching anything ---- */
+    ota_set_state(OTA_STATE_BACKUP);
+
+    if (ota_backup_current() != 0)
+    {
+        printf("OTA: Backup failed, aborting update\n");
+        ota_set_state(OTA_STATE_FAILED);
+        return -1;
+    }
+
+    /* ---- Install ---- */
+    ota_set_state(OTA_STATE_INSTALLING);
 
     if (ota_install_package() != 0)
+    {
+        printf("OTA: Install failed, restoring backup\n");
+        ota_restore_backup();
+        ota_set_state(OTA_STATE_FAILED);
         return -1;
+    }
+
+    /* Record the new version so the next boot's ota_read_current_version()
+     * reports it correctly. */
+    FILE *vfp = fopen(OTA_VERSION_FILE, "w");
+    if (vfp != NULL)
+    {
+        fprintf(vfp, "%s\n", ctx->info.latest_version);
+        fclose(vfp);
+    }
+
+    /* ---- Restart / reboot + health check ---- */
+    ota_set_state(OTA_STATE_RESTARTING);
+
+    if (ctx->config.reboot_after_update)
+    {
+        /* This does not return on success -- the board reboots.
+         * Health-check/rollback in this mode has to happen on the
+         * *next* boot (e.g. a watchdog in ota_main checking that
+         * gateway.service came up, outside the scope of this
+         * process's lifetime). */
+        ota_publish_result(true);
+        ota_reboot_board();
+        return 0;
+    }
+
+    ota_restart_service();
+
+    if (!ota_health_check())
+    {
+        printf("OTA: New version failed health check, rolling back\n");
+
+        ota_set_state(OTA_STATE_ROLLBACK);
+
+        ota_restore_backup();
+        ota_restart_service();
+
+        ota_set_state(OTA_STATE_FAILED);
+        return -1;
+    }
+
+    ota_set_state(OTA_STATE_SUCCESS);
+
+    printf("OTA: Update to version %s completed successfully\n",
+           ctx->info.latest_version);
 
     return 0;
 }

@@ -1,0 +1,27 @@
+[Unit]
+Description=OTA Update Service (ThingsBoard RPC-triggered firmware updater)
+# Independent of the main gateway app: OTA must keep running even
+# while gateway.service is being stopped/replaced during an update.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# All OTA paths (ota_config.json, update/, backup/, temp/, version.txt)
+# are resolved relative to this directory -- see ota_paths.h.
+WorkingDirectory=/opt/ota
+ExecStart=/usr/bin/ota_service
+Restart=on-failure
+RestartSec=5
+
+# The service installs/replaces the gateway binary and can reboot
+# the board, so it needs root privileges and access to systemctl.
+User=root
+
+# Give firmware downloads (a large .tar.gz) plenty of time to
+# finish before systemd considers a restart "flapping".
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target

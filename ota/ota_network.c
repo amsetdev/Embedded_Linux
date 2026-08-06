@@ -2,16 +2,12 @@
  * @file ota_network.c
  * @brief OTA HTTPS download and verification.
  *
- * This module implements all network related functionality
- * required by the OTA service.
- *
  * Responsibilities:
  * - Download latest.json
  * - Parse OTA metadata
- * - Download firmware package
- * - Download SHA256 file
+ * - Download firmware package (with progress reporting)
+ * - Download SHA256 checksum
  * - Verify package integrity
- * - Publish OTA status
  */
 
 #include "ota_network.h"
@@ -23,108 +19,83 @@
 #include <string.h>
 
 #include <curl/curl.h>
-
 #include <cjson/cJSON.h>
-
-#include <openssl/sha.h>
+#include <openssl/evp.h>
 
 /*=============================================================
  *                  Private Structures
  *============================================================*/
 
-/**
- * @brief CURL download context.
- */
 typedef struct
 {
     FILE *fp;
-
     long downloaded;
-
+    curl_off_t total;
+    int last_reported_pct;
+    bool report_progress;
 } ota_download_t;
 
-/*=============================================================
- *              Private Function Prototypes
- *============================================================*/
-
-static size_t ota_write_callback(void *buffer,
-                                 size_t size,
-                                 size_t nmemb,
-                                 void *userdata);
-
-static int ota_download_file(const char *url,
-                             const char *filename);
+static size_t ota_write_callback(void *buffer, size_t size, size_t nmemb, void *userdata);
+static int ota_xfer_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                              curl_off_t ultotal, curl_off_t ulnow);
+static int ota_download_file(const char *url, const char *filename, bool report_progress);
 
 /*=============================================================
- *                 CURL Write Callback
+ *                 CURL Callbacks
  *============================================================*/
 
-/**
- * @brief CURL write callback.
- *
- * Stores downloaded bytes into a local file.
- *
- * @param buffer Received data.
- * @param size Element size.
- * @param nmemb Number of elements.
- * @param userdata File pointer.
- *
- * @return Number of bytes written.
- */
-static size_t ota_write_callback(void *buffer,
-                                 size_t size,
-                                 size_t nmemb,
-                                 void *userdata)
+static size_t ota_write_callback(void *buffer, size_t size, size_t nmemb, void *userdata)
 {
-    ota_download_t *ctx;
+    ota_download_t *ctx = (ota_download_t *)userdata;
+    size_t bytes = fwrite(buffer, size, nmemb, ctx->fp);
 
-    ctx = (ota_download_t *)userdata;
-
-    size_t bytes;
-
-    bytes = fwrite(buffer,
-                   size,
-                   nmemb,
-                   ctx->fp);
-
-    ctx->downloaded += (bytes * size);
+    ctx->downloaded += (long)(bytes * size);
 
     return bytes;
 }
 
-/*=============================================================
- *             Generic File Download
- *============================================================*/
+/* Called periodically by libcurl during a transfer; used to publish
+ * download progress ("gateway/ota/progress") to ThingsBoard without
+ * flooding the broker (reported at most every 10%). */
+static int ota_xfer_callback(void *clientp, curl_off_t dltotal, curl_off_t dlnow,
+                              curl_off_t ultotal, curl_off_t ulnow)
+{
+    (void)ultotal;
+    (void)ulnow;
 
-/**
- * @brief Download file using HTTPS.
- *
- * @param url Download URL.
- * @param filename Destination filename.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
-static int ota_download_file(const char *url,
-                             const char *filename)
+    ota_download_t *ctx = (ota_download_t *)clientp;
+
+    if (!ctx->report_progress || dltotal <= 0)
+    {
+        return 0;
+    }
+
+    int pct = (int)((dlnow * 100) / dltotal);
+
+    if (pct >= ctx->last_reported_pct + 10 || pct == 100)
+    {
+        ctx->last_reported_pct = pct;
+        ota_publish_progress(pct);
+    }
+
+    return 0; /* returning non-zero would abort the transfer */
+}
+
+static int ota_download_file(const char *url, const char *filename, bool report_progress)
 {
     CURL *curl;
-
     CURLcode ret;
-
     ota_download_t ctx;
 
     printf("Downloading:\n%s\n", url);
 
-    ctx.downloaded = 0;
-
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.report_progress = report_progress;
     ctx.fp = fopen(filename, "wb");
 
     if (ctx.fp == NULL)
     {
-        printf("OTA: Cannot create %s\n",
-               filename);
-
+        printf("OTA: Cannot create %s\n", filename);
         return -1;
     }
 
@@ -136,48 +107,33 @@ static int ota_download_file(const char *url,
         return -1;
     }
 
-    curl_easy_setopt(curl,
-                     CURLOPT_URL,
-                     url);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, ota_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
-    curl_easy_setopt(curl,
-                     CURLOPT_FOLLOWLOCATION,
-                     1L);
-
-    curl_easy_setopt(curl,
-                     CURLOPT_WRITEFUNCTION,
-                     ota_write_callback);
-
-    curl_easy_setopt(curl,
-                     CURLOPT_WRITEDATA,
-                     &ctx);
-
-    curl_easy_setopt(curl,
-                     CURLOPT_CONNECTTIMEOUT,
-                     20L);
-
-    curl_easy_setopt(curl,
-                     CURLOPT_TIMEOUT,
-                     300L);
+    if (report_progress)
+    {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ota_xfer_callback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+    }
 
     ret = curl_easy_perform(curl);
 
     curl_easy_cleanup(curl);
-
     fclose(ctx.fp);
 
     if (ret != CURLE_OK)
     {
-        printf("Download Failed : %s\n",
-               curl_easy_strerror(ret));
-
+        printf("Download Failed : %s\n", curl_easy_strerror(ret));
         remove(filename);
-
         return -1;
     }
 
-    printf("Downloaded %ld bytes\n",
-           ctx.downloaded);
+    printf("Downloaded %ld bytes\n", ctx.downloaded);
 
     return 0;
 }
@@ -186,34 +142,22 @@ static int ota_download_file(const char *url,
  *             Download latest.json
  *============================================================*/
 
-/**
- * @brief Download latest.json from GitHub.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_download_latest_json(void)
 {
-    ota_context_t *ctx;
-
-    ctx = ota_get_context();
+    ota_context_t *ctx = ota_get_context();
 
     printf("\n=================================\n");
     printf("Downloading latest.json\n");
     printf("=================================\n");
+    printf("URL : %s\n", ctx->config.latest_url);
 
-    printf("URL : %s\n",
-           ctx->config.latest_url);
-
-    if (ota_download_file(ctx->config.latest_url,
-                          OTA_LATEST_JSON_FILE) != 0)
+    if (ota_download_file(ctx->config.latest_url, OTA_LATEST_JSON_FILE, false) != 0)
     {
         printf("OTA: latest.json download failed\n");
         return -1;
     }
 
     printf("OTA: latest.json downloaded successfully\n");
-
     return 0;
 }
 
@@ -221,33 +165,14 @@ int ota_download_latest_json(void)
  *             Parse latest.json
  *============================================================*/
 
-/**
- * @brief Parse downloaded latest.json.
- *
- * Example JSON:
- *
- * {
- *   "latest_version":"1.1.0",
- *   "package_name":"gateway_v1.1.0.tar.gz",
- *   "package_url":"https://.....",
- *   "sha256_url":"https://....."
- * }
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_parse_latest_json(void)
 {
     FILE *fp;
-
     long length;
-
     char *buffer;
-
+    size_t nread;
     ota_context_t *ctx;
-
     cJSON *root = NULL;
-
     cJSON *item;
 
     ctx = ota_get_context();
@@ -261,12 +186,17 @@ int ota_parse_latest_json(void)
     }
 
     fseek(fp, 0, SEEK_END);
-
     length = ftell(fp);
-
     rewind(fp);
 
-    buffer = malloc(length + 1);
+    if (length <= 0)
+    {
+        printf("OTA: latest.json is empty\n");
+        fclose(fp);
+        return -1;
+    }
+
+    buffer = malloc((size_t)length + 1);
 
     if (buffer == NULL)
     {
@@ -274,14 +204,19 @@ int ota_parse_latest_json(void)
         return -1;
     }
 
-    fread(buffer, 1, length, fp);
+    nread = fread(buffer, 1, (size_t)length, fp);
+    fclose(fp);
+
+    if (nread != (size_t)length)
+    {
+        printf("OTA: Short read on latest.json\n");
+        free(buffer);
+        return -1;
+    }
 
     buffer[length] = '\0';
 
-    fclose(fp);
-
     root = cJSON_Parse(buffer);
-
     free(buffer);
 
     if (root == NULL)
@@ -290,78 +225,48 @@ int ota_parse_latest_json(void)
         return -1;
     }
 
-    item = cJSON_GetObjectItem(root,
-                               "latest_version");
-
+    item = cJSON_GetObjectItem(root, "latest_version");
     if (cJSON_IsString(item))
     {
-        strncpy(ctx->info.latest_version,
-                item->valuestring,
-                OTA_VERSION_LEN - 1);
+        strncpy(ctx->info.latest_version, item->valuestring, OTA_VERSION_LEN - 1);
     }
 
-    item = cJSON_GetObjectItem(root,
-                               "package_name");
-
+    item = cJSON_GetObjectItem(root, "package_name");
     if (cJSON_IsString(item))
     {
-        strncpy(ctx->info.package_name,
-                item->valuestring,
-                OTA_FILENAME_LEN - 1);
+        strncpy(ctx->info.package_name, item->valuestring, OTA_FILENAME_LEN - 1);
     }
 
-    item = cJSON_GetObjectItem(root,
-                               "package_url");
-
+    item = cJSON_GetObjectItem(root, "package_url");
     if (cJSON_IsString(item))
     {
-        strncpy(ctx->info.package_url,
-                item->valuestring,
-                OTA_URL_LEN - 1);
+        strncpy(ctx->info.package_url, item->valuestring, OTA_URL_LEN - 1);
     }
 
-    item = cJSON_GetObjectItem(root,
-                               "sha256_url");
-
+    item = cJSON_GetObjectItem(root, "sha256_url");
     if (cJSON_IsString(item))
     {
-        strncpy(ctx->info.sha256_url,
-                item->valuestring,
-                OTA_URL_LEN - 1);
+        strncpy(ctx->info.sha256_url, item->valuestring, OTA_URL_LEN - 1);
     }
 
     cJSON_Delete(root);
 
     printf("\n========== OTA Metadata ==========\n");
-
-    printf("Current Version : %s\n",
-           ctx->info.current_version);
-
-    printf("Latest Version  : %s\n",
-           ctx->info.latest_version);
-
-    printf("Package Name    : %s\n",
-           ctx->info.package_name);
-
-    printf("Package URL     : %s\n",
-           ctx->info.package_url);
-
-    printf("SHA256 URL      : %s\n",
-           ctx->info.sha256_url);
-
+    printf("Current Version : %s\n", ctx->info.current_version);
+    printf("Latest Version  : %s\n", ctx->info.latest_version);
+    printf("Package Name    : %s\n", ctx->info.package_name);
+    printf("Package URL     : %s\n", ctx->info.package_url);
+    printf("SHA256 URL      : %s\n", ctx->info.sha256_url);
     printf("==================================\n");
 
-    if (ota_compare_version(ctx->info.current_version,
-                            ctx->info.latest_version) == 1)
+    if (ota_compare_version(ctx->info.current_version, ctx->info.latest_version) == 1)
     {
         ctx->info.update_available = true;
-
         printf("OTA: New firmware available\n");
     }
     else
     {
         ctx->info.update_available = false;
-
         printf("OTA: Already running latest firmware\n");
     }
 
@@ -372,55 +277,31 @@ int ota_parse_latest_json(void)
  *             Download Firmware Package
  *============================================================*/
 
-/**
- * @brief Download OTA firmware package.
- *
- * Downloads the firmware package from the URL
- * specified in latest.json.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_download_package(void)
 {
-    ota_context_t *ctx;
-
+    ota_context_t *ctx = ota_get_context();
     char package_path[OTA_PATH_LEN];
 
-    ctx = ota_get_context();
+    snprintf(package_path, sizeof(package_path), "%s/%s",
+             OTA_UPDATE_DIRECTORY, ctx->info.package_name);
 
-    snprintf(package_path,
-             sizeof(package_path),
-             "%s/%s",
-             OTA_UPDATE_DIRECTORY,
-             ctx->info.package_name);
-
-    strncpy(ctx->info.package_path,
-            package_path,
-            sizeof(ctx->info.package_path) - 1);
+    snprintf(ctx->info.package_path, sizeof(ctx->info.package_path), "%s", package_path);
 
     printf("\n=================================\n");
     printf("Downloading Firmware Package\n");
     printf("=================================\n");
-
-    printf("URL : %s\n",
-           ctx->info.package_url);
-
-    printf("File: %s\n",
-           package_path);
+    printf("URL : %s\n", ctx->info.package_url);
+    printf("File: %s\n", package_path);
 
     ota_publish_status("DOWNLOADING");
 
-    if (ota_download_file(ctx->info.package_url,
-                          package_path) != 0)
+    if (ota_download_file(ctx->info.package_url, package_path, true) != 0)
     {
         printf("OTA: Firmware download failed\n");
-
         return -1;
     }
 
     printf("OTA: Firmware downloaded successfully\n");
-
     return 0;
 }
 
@@ -428,44 +309,25 @@ int ota_download_package(void)
  *             Download SHA256 File
  *============================================================*/
 
-/**
- * @brief Download SHA256 checksum file.
- *
- * @retval 0 Success
- * @retval -1 Failure
- */
 int ota_download_sha256(void)
 {
-    ota_context_t *ctx;
-
+    ota_context_t *ctx = ota_get_context();
     char sha_path[OTA_PATH_LEN];
+    FILE *fp;
 
-    ctx = ota_get_context();
-
-    snprintf(sha_path,
-             sizeof(sha_path),
-             "%s/package.sha256",
-             OTA_UPDATE_DIRECTORY);
+    snprintf(sha_path, sizeof(sha_path), "%s/package.sha256", OTA_UPDATE_DIRECTORY);
 
     printf("\n=================================\n");
     printf("Downloading SHA256\n");
     printf("=================================\n");
+    printf("URL : %s\n", ctx->info.sha256_url);
+    printf("File: %s\n", sha_path);
 
-    printf("URL : %s\n",
-           ctx->info.sha256_url);
-
-    printf("File: %s\n",
-           sha_path);
-
-    if (ota_download_file(ctx->info.sha256_url,
-                          sha_path) != 0)
+    if (ota_download_file(ctx->info.sha256_url, sha_path, false) != 0)
     {
         printf("OTA: SHA256 download failed\n");
-
         return -1;
     }
-
-    FILE *fp;
 
     fp = fopen(sha_path, "r");
 
@@ -475,9 +337,7 @@ int ota_download_sha256(void)
         return -1;
     }
 
-    if (fgets(ctx->info.sha256,
-              sizeof(ctx->info.sha256),
-              fp) == NULL)
+    if (fgets(ctx->info.sha256, sizeof(ctx->info.sha256), fp) == NULL)
     {
         fclose(fp);
         return -1;
@@ -485,12 +345,9 @@ int ota_download_sha256(void)
 
     fclose(fp);
 
-    ctx->info.sha256[
-        strcspn(ctx->info.sha256, "\r\n")
-    ] = '\0';
+    ctx->info.sha256[strcspn(ctx->info.sha256, "\r\n")] = '\0';
 
-    printf("Expected SHA256:\n%s\n",
-           ctx->info.sha256);
+    printf("Expected SHA256:\n%s\n", ctx->info.sha256);
 
     return 0;
 }
@@ -499,32 +356,16 @@ int ota_download_sha256(void)
  *                 Verify Firmware Package
  *============================================================*/
 
-/**
- * @brief Verify downloaded firmware package using SHA256.
- *
- * Calculates the SHA256 hash of the downloaded firmware
- * package and compares it with the checksum downloaded
- * from the OTA server.
- *
- * @retval 0 Verification successful
- * @retval -1 Verification failed
- */
 int ota_verify_package(void)
 {
     ota_context_t *ctx = ota_get_context();
-
     FILE *fp;
-
-    SHA256_CTX sha_ctx;
-
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-
+    EVP_MD_CTX *mdctx;
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hash_len = 0;
     unsigned char buffer[4096];
-
     size_t bytes_read;
-
     char calculated_hash[65];
-
     int i;
 
     fp = fopen(ctx->info.package_path, "rb");
@@ -535,108 +376,44 @@ int ota_verify_package(void)
         return -1;
     }
 
-    SHA256_Init(&sha_ctx);
+    mdctx = EVP_MD_CTX_new();
 
-    while ((bytes_read = fread(buffer,
-                               1,
-                               sizeof(buffer),
-                               fp)) > 0)
+    if (mdctx == NULL || EVP_DigestInit_ex(mdctx, EVP_sha256(), NULL) != 1)
     {
-        SHA256_Update(&sha_ctx,
-                      buffer,
-                      bytes_read);
+        printf("OTA: Failed to initialize SHA256 context\n");
+        fclose(fp);
+        if (mdctx) EVP_MD_CTX_free(mdctx);
+        return -1;
+    }
+
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), fp)) > 0)
+    {
+        EVP_DigestUpdate(mdctx, buffer, bytes_read);
     }
 
     fclose(fp);
 
-    SHA256_Final(hash,
-                 &sha_ctx);
+    EVP_DigestFinal_ex(mdctx, hash, &hash_len);
+    EVP_MD_CTX_free(mdctx);
 
-    for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
+    for (i = 0; i < (int)hash_len && i < 32; i++)
     {
-        sprintf(&calculated_hash[i * 2],
-                "%02x",
-                hash[i]);
+        sprintf(&calculated_hash[i * 2], "%02x", hash[i]);
     }
 
     calculated_hash[64] = '\0';
 
     printf("\n========== SHA256 ==========\n");
-
-    printf("Expected : %s\n",
-           ctx->info.sha256);
-
-    printf("Actual   : %s\n",
-           calculated_hash);
-
+    printf("Expected : %s\n", ctx->info.sha256);
+    printf("Actual   : %s\n", calculated_hash);
     printf("============================\n");
 
-    if (strcasecmp(calculated_hash,
-                   ctx->info.sha256) != 0)
+    if (strcasecmp(calculated_hash, ctx->info.sha256) != 0)
     {
         printf("OTA: SHA256 verification FAILED\n");
         return -1;
     }
 
     printf("OTA: SHA256 verification PASSED\n");
-
     return 0;
-}
-
-/*=============================================================
- *                 MQTT OTA Status
- *============================================================*/
-
-/**
- * @brief Publish OTA state.
- */
-int ota_publish_status(const char *status)
-{
-    char payload[128];
-
-    snprintf(payload,
-             sizeof(payload),
-             "{"
-             "\"state\":\"%s\""
-             "}",
-             status);
-
-    return mqtt_publish("gateway/ota/status",
-                        payload);
-}
-
-/**
- * @brief Publish OTA download progress.
- */
-int ota_publish_progress(int percent)
-{
-    char payload[64];
-
-    snprintf(payload,
-             sizeof(payload),
-             "{"
-             "\"progress\":%d"
-             "}",
-             percent);
-
-    return mqtt_publish("gateway/ota/progress",
-                        payload);
-}
-
-/**
- * @brief Publish OTA result.
- */
-int ota_publish_result(bool success)
-{
-    char payload[128];
-
-    snprintf(payload,
-             sizeof(payload),
-             "{"
-             "\"result\":\"%s\""
-             "}",
-             success ? "SUCCESS" : "FAILED");
-
-    return mqtt_publish("gateway/ota/result",
-                        payload);
 }
