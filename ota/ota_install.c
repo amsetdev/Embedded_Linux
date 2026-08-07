@@ -54,13 +54,15 @@ int ota_backup_current(void)
     return run_cmd(cmd);
 }
 
-int ota_install_package(void)
+int ota_install_package(const char *package_path)
 {
     char cmd[512];
 
-    snprintf(cmd, sizeof(cmd),
-             "tar -xzf %s -C ./",
-             OTA_PACKAGE_FILE);
+    snprintf(cmd,
+             sizeof(cmd),
+             "tar -xzf %s -C ./ && chmod +x %s",
+             package_path,
+             OTA_EXECUTABLE_PATH);
 
     return run_cmd(cmd);
 }
@@ -93,20 +95,24 @@ int ota_reboot_board(void)
 
 bool ota_health_check(void)
 {
-    /* Give systemd a moment to bring the service back up. */
-    for (int attempt = 0; attempt < 5; attempt++)
+    for (int attempt = 0; attempt < 15; attempt++)
     {
         sleep(2);
 
-        int rc = system("systemctl is-active --quiet gateway.service");
+        int rc = system(
+            "systemctl is-active --quiet gateway.service"
+        );
 
         if (rc == 0)
         {
-            printf("OTA: Health check passed (attempt %d)\n", attempt + 1);
+            printf("OTA: Health check passed\n");
             return true;
         }
+
+        printf("OTA: Waiting for gateway.service (%d/15)\n",
+               attempt + 1);
     }
 
-    printf("OTA: Health check FAILED - gateway.service did not come up\n");
+    printf("OTA: Health check FAILED\n");
     return false;
 }

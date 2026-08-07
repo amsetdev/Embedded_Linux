@@ -97,12 +97,17 @@ typedef struct
 
     char backup_directory[OTA_PATH_LEN];
 
-char mqtt_host[128];
-int mqtt_port;
-char mqtt_username[64];
-char mqtt_password[64];
-char mqtt_client_id[64];
-char mqtt_topic[128];
+    char mqtt_host[128];
+
+    int mqtt_port;
+
+    char mqtt_username[64];
+
+    char mqtt_password[64];
+
+    char mqtt_client_id[64];
+
+    char mqtt_topic[128];
 
     /* If true, reboot the whole STM32MP1 board after a successful
      * install. If false (default) only "gateway.service" is

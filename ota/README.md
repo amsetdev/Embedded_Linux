@@ -3,6 +3,15 @@
 Runs as its own process/systemd unit, separate from `gateway.service`,
 so it can update or restart the gateway app without taking itself down.
 
+## Build
+
+```bash
+# Cross-compile for the STM32MP1 target (arm-linux-gnueabihf toolchain)
+make
+
+# Native build on your dev machine, for quick testing of the logic
+make HOST=1
+```
 
 Requires `libmosquitto-dev`, `libcurl4-openssl-dev`, `libssl-dev` (or their
 equivalents in your Yocto/Buildroot SDK sysroot).

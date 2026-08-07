@@ -33,9 +33,6 @@
 #include "rtc.h"
 #include "network_manager.h"
 #include "ethernet.h"
-#include "wifi.h"
-
-
 
 /** @brief Application run flag. */
 volatile int running = 1;
@@ -203,19 +200,17 @@ int main(void)
 
     settings_load();
 
-    printf("[NET] Starting Network Manager...\n");
-
     network_init();
 
-    printf("[NET] Waiting for Internet...\n");
+    printf("[NET] Waiting for network...\n");
 
     while (!network_is_online())
     {
-        printf("[NET] Internet not available...\n");
+        network_monitor();
         sleep(1);
     }
 
-    printf("[NET] Internet Connected\n");
+    printf("[NET] Network Available\n");
 
     printf("\n=== MODBUS RTU READER — STM32MP157F-DK2 ===\n");
     printf("  Port     : %s @ %d  Slave: %d\n",
@@ -299,7 +294,6 @@ int main(void)
     mqtt_init();
     http_init();
 
-
     pthread_create(&mb_thread_id,
                    NULL,
                    mb_thread_func,
@@ -363,8 +357,6 @@ int main(void)
     pthread_join(mb_thread_id, NULL);
     pthread_join(mb_thread_id2, NULL);
     pthread_join(rtc_thread_id, NULL);
-    
-    
 
     rs485_rx();
     rs485_gpio_close();
@@ -374,10 +366,6 @@ int main(void)
     http_cleanup();
     drm_cleanup();
     offline_cleanup();
-   
-    
-
-    network_stop();
 
     drive_logger_stop();
 
@@ -385,3 +373,12 @@ int main(void)
 
     return 0;
 }
+
+
+
+//to create .tar package after build main
+//  Deployed to root@192.168.137.4:/home/root/edb_c/linking/
+// PS C:\Users\Admin\Embedded_Linux> Copy-Item .\build\main .\release\main                                                                                
+// PS C:\Users\Admin\Embedded_Linux> tar -czf gateway_v1.0.2.tar.gz -C release .                                                                          
+// PS C:\Users\Admin\Embedded_Linux> (Get-FileHash .\gateway_v1.0.2.tar.gz -Algorithm SHA256).Hash | Out-File -Encoding ascii gateway_v1.0.2.tar.gz.sha256
+// PS C:\Users\Admin\Embedded_Linux> 

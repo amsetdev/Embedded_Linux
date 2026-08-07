@@ -116,6 +116,24 @@ int ota_load_config(void)
         ctx->config.mqtt_port = item->valueint;
     }
 
+    item = cJSON_GetObjectItem(root, "mqtt_username");
+    if (cJSON_IsString(item))
+    {
+        strncpy(ctx->config.mqtt_username, item->valuestring, sizeof(ctx->config.mqtt_username) - 1);
+    }
+
+    item = cJSON_GetObjectItem(root, "mqtt_password");
+    if (cJSON_IsString(item))
+    {
+        strncpy(ctx->config.mqtt_password, item->valuestring, sizeof(ctx->config.mqtt_password) - 1);
+    }
+
+    item = cJSON_GetObjectItem(root, "mqtt_client_id");
+    if (cJSON_IsString(item))
+    {
+        strncpy(ctx->config.mqtt_client_id, item->valuestring, sizeof(ctx->config.mqtt_client_id) - 1);
+    }
+
     item = cJSON_GetObjectItem(root, "mqtt_topic");
     if (cJSON_IsString(item))
     {
@@ -138,6 +156,9 @@ int ota_load_config(void)
     printf("Backup Directory   : %s\n", ctx->config.backup_directory);
     printf("MQTT Host          : %s\n", ctx->config.mqtt_host);
     printf("MQTT Port          : %d\n", ctx->config.mqtt_port);
+    printf("MQTT Username      : %s\n", ctx->config.mqtt_username);
+    printf("MQTT Client ID     : %s\n", ctx->config.mqtt_client_id);
+    printf("MQTT Topic         : %s\n", ctx->config.mqtt_topic);
     printf("Reboot After Update: %s\n", ctx->config.reboot_after_update ? "Yes" : "No");
     printf("=======================================\n");
 

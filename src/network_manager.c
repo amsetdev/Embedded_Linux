@@ -79,8 +79,15 @@ static void use_wifi(void)
     printf("=====================================\n");
     printf("[ NET ] Switching to WiFi\n");
 
-    /* Attempt Wi-Fi connection once */
-    if (wifi_connect() == 0)
+
+    if (wifi_is_connected())
+    {
+        if (wifi_get_ip(ip, sizeof(ip)) == 0)
+            printf("[ NET ] WiFi IP : %s\n", ip);
+
+        current_network = NET_WIFI;
+    }
+    else if (wifi_connect() == 0)
     {
         if (wifi_get_ip(ip, sizeof(ip)) == 0)
             printf("[ NET ] WiFi IP : %s\n", ip);

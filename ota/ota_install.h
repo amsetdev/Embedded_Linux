@@ -11,7 +11,7 @@ extern "C" {
 int ota_backup_current(void);
 
 /** Extract the downloaded package over the current installation. */
-int ota_install_package(void);
+int ota_install_package(const char *package_path);
 
 /** Restore the previous executable/version from backup (rollback). */
 int ota_restore_backup(void);
