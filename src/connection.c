@@ -1,11 +1,17 @@
 /**
-*@file connection.c
-*@brief Internet connectivity monitoring and MQTT reconnection module.
-*This module periodically checks internet connectivity by attempting a TCP
-*connection to a known public DNS server.It maintains the global internet
-*connectivity status and automatically attempts to reconnect the MQTT client when internet access is resto
-*Features : *-Periodic internet connectivity monitoring.*
--Interruptible monitoring thread using condition variables.* -Automatic MQTT reconnection after connectivity recovery.* -Graceful startup and shutdown of the monitoring thread.
+ * @file connection.c
+ * @brief Internet connectivity monitoring and MQTT reconnection module.
+ *
+ * This module periodically checks internet connectivity by attempting a TCP
+ * connection to a known public DNS server. It maintains the global internet
+ * connectivity status and automatically attempts to reconnect the MQTT client
+ * when internet access is restored.
+ *
+ * Features:
+ * - Periodic internet connectivity monitoring.
+ * - Interruptible monitoring thread using condition variables.
+ * - Automatic MQTT reconnection after connectivity recovery.
+ * - Graceful startup and shutdown of the monitoring thread.
  */
 
 #include <stdio.h>
@@ -41,8 +47,8 @@
 /** @brief Socket connection timeout (in seconds). */
 #define CHECK_TIMEOUT_S 2
 
-    /** @brief Global internet connectivity status (1 = connected, 0 = disconnected). */
-    volatile int internet_up = 0;
+/** @brief Global internet connectivity status (1 = connected, 0 = disconnected). */
+volatile int internet_up = 0;
 
 /** @brief Thread handle for the connectivity monitoring thread. */
 static pthread_t conn_tid;

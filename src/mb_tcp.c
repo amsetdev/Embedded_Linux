@@ -222,64 +222,167 @@ static void cleanup(master_ctx_t *ctx)
  */
 void *mb_thread_func1(void *arg)
 {
-    mb_thread_arg_t *targ = (mb_thread_arg_t *)arg;
+    mb_thread_arg_t *args = (mb_thread_arg_t *)arg;
 
-    /* ── Validate argument ── */
-    if (!targ || targ->slave_ip[0] == '\0') {
-        fprintf(stderr, "[ MODBUS_TCP ] mb_thread_func: slave_ip not set in mb_thread_arg_t\n");
-        return NULL;
-    }
-
-    /* ── Build internal context ── */
     master_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
 
-    strncpy(ctx.slave_ip, targ->slave_ip, sizeof(ctx.slave_ip) - 1);
-    ctx.slave_port = (targ->slave_port > 0) ? targ->slave_port : MODBUS_DEFAULT_PORT;
-    ctx.slave_id   = (targ->slave_id   > 0) ? targ->slave_id   : MODBUS_DEFAULT_SLAVE_ID;
-    printf("[ MODBUS_TCP ] modbus tcp start    : %s\n", ctx.slave_ip);
-    printf("[ MODBUS_TCP ] Slave IP   : %s\n", ctx.slave_ip);
-    printf("[ MODBUS_TCP ] Slave Port : %d\n", ctx.slave_port);
-    printf("[ MODBUS_TCP ] Slave ID   : %d\n", ctx.slave_id);
-    printf("[ MODBUS_TCP ] Registers  : 1 to %d\n", MODBUS_NUM_REGS);
-    printf("[ MODBUS_TCP ] Poll every : %d seconds\n\n", POLL_INTERVAL_SEC);
+    /*
+     * Copy Modbus TCP configuration.
+     */
+    strncpy(ctx.slave_ip,
+            args->slave_ip,
+            sizeof(ctx.slave_ip) - 1);
 
-    /* ── SQLite init ── */
-    if (db_init(&ctx.db) != 0) {
-        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: DB init failed.\n");
+    ctx.slave_ip[sizeof(ctx.slave_ip) - 1] = '\0';
+
+    ctx.slave_port = args->slave_port;
+    ctx.slave_id   = args->slave_id;
+
+    /*
+     * Use default Modbus TCP port if none was supplied.
+     */
+    if (ctx.slave_port <= 0)
+        ctx.slave_port = 502;
+
+    /*
+     * Use Unit ID 1 if none was supplied.
+     */
+    if (ctx.slave_id <= 0)
+        ctx.slave_id = 1;
+
+    printf("[ MODBUS_TCP ] Slave IP   : %s\n",
+           ctx.slave_ip);
+
+    printf("[ MODBUS_TCP ] Slave Port : %d\n",
+           ctx.slave_port);
+
+    printf("[ MODBUS_TCP ] Slave ID   : %d\n",
+           ctx.slave_id);
+
+    printf("[ MODBUS_TCP ] Registers  : 1 to %d\n",
+           MODBUS_NUM_REGS);
+
+   printf("[ MODBUS_TCP ] Poll every : %d seconds...\n",
+       POLL_INTERVAL_SEC);
+
+    /*
+     * Initialize SQLite database.
+     */
+    if (db_init(&ctx.db) < 0)
+    {
+        fprintf(stderr,
+                "[ MODBUS_TCP ] Database initialization failed.\n");
+
         return NULL;
     }
 
-    /* ── Modbus connect ── */
-    ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
-    if (!ctx.mb_ctx) {
-        fprintf(stderr, "[ MODBUS_TCP ] Thread exiting: initial Modbus connect failed.\n");
-        //if master cant connect to slave tcp_modbus so thrade end here
+
+    /*
+     * Initial Modbus TCP connection.
+     */
+    ctx.mb_ctx =
+        mb_connect(ctx.slave_ip,
+                   ctx.slave_port,
+                   ctx.slave_id);
+
+    if (ctx.mb_ctx == NULL)
+    {
+        fprintf(stderr,
+                "[ MODBUS_TCP ] Initial Modbus connect failed.\n");
+
         cleanup(&ctx);
+
         return NULL;
     }
 
-    /* ── Poll loop ── */
-    int poll_count = 0;
-    while (1) {
-        printf("\n[POLL] Cycle #%d\n", ++poll_count);
 
+    printf("[ MODBUS_TCP ] Connection established.\n");
+
+
+    /*
+     * Main polling loop.
+     */
+    extern volatile int running;
+
+    while (running)
+    {
+        /*
+         * Read holding registers.
+         */
         int rc = read_holding_registers(&ctx);
 
-        if (rc == -1) {
-            fprintf(stderr, "[ MODBUS_TCP ] Attempting reconnect…\n");
-            modbus_close(ctx.mb_ctx);
-            modbus_free(ctx.mb_ctx);
-            ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
-            if (!ctx.mb_ctx) {
-                fprintf(stderr, "[ MODBUS_TCP ] Reconnect failed. Thread exiting.\n");
-                break;
+        if (rc < 0)
+        {
+            fprintf(stderr,
+                    "[ MODBUS_TCP ] Read failed. "
+                    "Closing connection.\n");
+
+            /*
+             * Close broken connection.
+             */
+            if (ctx.mb_ctx)
+            {
+                modbus_close(ctx.mb_ctx);
+                modbus_free(ctx.mb_ctx);
+                ctx.mb_ctx = NULL;
             }
+
+            /*
+             * Try to reconnect.
+             */
+            while (running && ctx.mb_ctx == NULL)
+            {
+                printf("[ MODBUS_TCP ] Reconnecting to "
+                       "%s:%d...\n",
+                       ctx.slave_ip,
+                       ctx.slave_port);
+
+                ctx.mb_ctx =
+                    mb_connect(ctx.slave_ip,
+                               ctx.slave_port,
+                               ctx.slave_id);
+
+                if (ctx.mb_ctx != NULL)
+                {
+                    printf("[ MODBUS_TCP ] Reconnected successfully.\n");
+                    break;
+                }
+
+                printf("[ MODBUS_TCP ] Reconnect failed. "
+                       "Retrying in 5 seconds...\n");
+
+                for (int i = 0; i < 5 && running; i++)
+                    sleep(1);
+            }
+
+            continue;
         }
 
-        sleep(POLL_INTERVAL_SEC);
+
+        /*
+         * Wait until next Modbus TCP polling cycle.
+         */
+        printf("[ MODBUS_TCP ] Next poll in %d seconds...\n",
+               POLL_INTERVAL_SEC);
+
+        for (int i = 0;
+             i < POLL_INTERVAL_SEC && running;
+             i++)
+        {
+            sleep(1);
+        }
     }
 
+
+    /*
+     * Application is shutting down.
+     */
+    printf("[ MODBUS_TCP ] Thread stopping...\n");
+
     cleanup(&ctx);
+
+    printf("[ MODBUS_TCP ] Thread exiting.\n");
+
     return NULL;
 }
