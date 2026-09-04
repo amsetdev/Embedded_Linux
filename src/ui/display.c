@@ -415,13 +415,13 @@ void disp_settings(void)
     fb_str(8,sy,"MQTT Broker:",COL_GRAY,COL_BLUE,1); sy+=14;
     char bshort[48]; strncpy(bshort,cfg.mqtt_broker,47); bshort[47]=0;
     fb_str(16,sy,bshort,COL_CYAN,COL_BLUE,1); sy+=16;
-    fb_str(8,sy,"MQTT User:",COL_GRAY,COL_BLUE,1);
-    fb_str(80,sy,cfg.mqtt_user,COL_CYAN,COL_BLUE,1); sy+=14;
+    fb_str(8,sy,"MQTT Client:",COL_GRAY,COL_BLUE,1);
+    fb_str(84,sy,cfg.mqtt_client_id,COL_CYAN,COL_BLUE,1); sy+=14;
     fb_str(8,sy,"Modbus Port:",COL_GRAY,COL_BLUE,1);
     fb_str(84,sy,cfg.modbus_port,COL_CYAN,COL_BLUE,1); sy+=16;
     fb_hline(0,sy,DISP_W,COL_DKGRAY); sy+=8;
-    fb_str_c(sy,"Edit broker/user/pass via SSH:",COL_DKGRAY,COL_BLUE,1); sy+=12;
-    fb_str_c(sy,"  settings.conf",COL_ORANGE,COL_BLUE,1);
+    fb_str_c(sy,"Edit config via SSH:",COL_DKGRAY,COL_BLUE,1); sy+=12;
+    fb_str_c(sy,"  smart_rtu_config.json",COL_ORANGE,COL_BLUE,1);
 
     if (ui_button(40,DISP_H-50,160,38,"  SAVE  ",COL_GREEN,COL_WHITE)) {
        // settings_save();

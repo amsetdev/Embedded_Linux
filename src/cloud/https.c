@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <curl/curl.h>
 
 /**
@@ -264,4 +265,81 @@ int https_put(const char *url, const char *json)
 int https_delete(const char *url)
 {
     return http_delete(url);
+}
+
+/**
+ * @brief libcurl write callback for writing data to a FILE.
+ *
+ * @param ptr    Pointer to the received data.
+ * @param size   Size of each element.
+ * @param nmemb  Number of elements.
+ * @param stream FILE pointer to write data to.
+ *
+ * @return Number of bytes written.
+ */
+static size_t write_file_cb(void *ptr, size_t size, size_t nmemb, void *stream)
+{
+    return fwrite(ptr, size, nmemb, (FILE *)stream);
+}
+
+/**
+ * @brief Downloads a file from a URL to local storage.
+ *
+ * @param url         Source URL.
+ * @param filepath    Destination file path.
+ * @param timeout_sec Total transfer timeout (0 = default 300s).
+ *
+ * @return 1 on success, 0 on failure.
+ */
+int https_download_file(const char *url,
+                        const char *filepath,
+                        long timeout_sec)
+{
+    if (!url || !filepath)
+        return 0;
+
+    if (timeout_sec <= 0)
+        timeout_sec = 300;
+
+    FILE *fp = fopen(filepath, "wb");
+
+    if (!fp)
+    {
+        perror("[HTTPS] fopen");
+        return 0;
+    }
+
+    CURL *curl = curl_easy_init();
+
+    if (!curl)
+    {
+        fclose(fp);
+        unlink(filepath);
+        return 0;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_file_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_sec);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    fclose(fp);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK)
+    {
+        fprintf(stderr, "[HTTPS] Download failed: %s\n",
+                curl_easy_strerror(res));
+        unlink(filepath);
+        return 0;
+    }
+
+    printf("[HTTPS] Downloaded %s\n", filepath);
+
+    return 1;
 }

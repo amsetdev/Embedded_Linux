@@ -1,10 +1,14 @@
 /**
  * @file mqtt.h
- * @brief MQTT client interface.
+ * @brief MQTT client interface (AWS IoT Core).
  *
  * This module provides functions for initializing an MQTT client,
  * building JSON payloads from Modbus data, publishing messages to
  * an MQTT broker, and cleaning up resources.
+ *
+ * Authentication uses X.509 mutual TLS (mTLS) with AWS IoT Core.
+ * Certificate paths and broker endpoint are configured via
+ * smart_rtu_config.json.
  */
 
 #ifndef MQTT_H
@@ -15,15 +19,11 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <mosquitto.h>
 
 /* -------------------------------------------------------------------------- */
 /* Configuration                                                              */
 /* -------------------------------------------------------------------------- */
-
-/**
- * @brief MQTT topic used for publishing Modbus data.
- */
-#define MQTT_TOPIC      "modbus/data"
 
 /**
  * @brief Maximum size of the generated JSON payload.
@@ -49,8 +49,10 @@ extern volatile int mqtt_connected;
 /**
  * @brief Initializes the MQTT client.
  *
- * Creates the MQTT client, configures authentication and TLS settings,
- * connects to the configured broker, and starts the MQTT network loop.
+ * Creates the MQTT client, configures X.509 mutual TLS
+ * authentication using certificate paths from the application
+ * configuration, connects to the AWS IoT Core endpoint, and
+ * starts the MQTT network loop.
  *
  * @return
  * - 1 if initialization succeeds.
@@ -87,6 +89,26 @@ void mqtt_publish(const char *payload);
  * destroys the client instance, and releases library resources.
  */
 void mqtt_cleanup(void);
+
+/**
+ * @brief Returns the Mosquitto client instance.
+ *
+ * @return Pointer to the active Mosquitto client, or NULL.
+ */
+struct mosquitto *mqtt_get_mosq(void);
+
+/**
+ * @brief Publishes a payload to an arbitrary MQTT topic.
+ *
+ * @param topic MQTT topic to publish to.
+ * @param payload Null-terminated payload string.
+ * @param qos MQTT QoS level (0, 1, or 2).
+ *
+ * @return
+ * - 1 on success.
+ * - 0 on failure.
+ */
+int mqtt_publish_to(const char *topic, const char *payload, int qos);
 
 /**
  * @brief Reconfigures MQTT disconnect handling.

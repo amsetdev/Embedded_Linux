@@ -432,6 +432,15 @@ int mb_transaction(uint8_t slave,
 
 
     /*
+     * Log the raw request frame for debugging.
+     */
+    printf("[MB] TX(%d): ", tx_len);
+    for (int i = 0; i < tx_len; i++)
+        printf("%02X ", tx[i]);
+    printf("\n");
+
+
+    /*
      * Remove stale data from previous transaction.
      */
     uart_flush_rx();
@@ -498,9 +507,20 @@ int mb_transaction(uint8_t slave,
         printf("[MB] Timeout: received %d/%d bytes\n",
                n,
                expected);
+        if (n > 0) {
+            printf("[MB] RX(%d): ", n);
+            for (int i = 0; i < n; i++)
+                printf("%02X ", rx[i]);
+            printf("\n");
+        }
 
         return 0;
     }
+
+    printf("[MB] RX(%d): ", n);
+    for (int i = 0; i < n; i++)
+        printf("%02X ", rx[i]);
+    printf("\n");
 
 
     /*

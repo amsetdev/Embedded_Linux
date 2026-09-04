@@ -25,7 +25,7 @@ extern "C" {
 #define SETTINGS_FILE "smart_rtu_config.json"
 
 /* -------------------------------------------------------------------------- */
-/* Default Modbus Configuration                                               */
+/* Default Modbus RTU Configuration                                           */
 /* -------------------------------------------------------------------------- */
 
 /** @brief Default Modbus serial port. */
@@ -44,20 +44,70 @@ extern "C" {
 #define MODBUS_STOPBITS_DEF    1
 
 /* -------------------------------------------------------------------------- */
-/* Default MQTT Configuration                                                 */
+/* Default Modbus TCP Configuration                                           */
 /* -------------------------------------------------------------------------- */
 
-/** @brief Default MQTT broker address. */
-#define MQTT_BROKER_DEF        "25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud"
+/** @brief Default Modbus TCP enable state (disabled). */
+#define MODBUS_TCP_ENABLE_DEF  0
+
+/** @brief Default Modbus TCP slave IP (unconfigured). */
+#define MODBUS_TCP_IP_DEF      ""
+
+/** @brief Default Modbus TCP port. */
+#define MODBUS_TCP_PORT_DEF    502
+
+/** @brief Default Modbus TCP slave ID. */
+#define MODBUS_TCP_SLAVE_DEF   1
+
+/* -------------------------------------------------------------------------- */
+/* Default MQTT Configuration (AWS IoT Core)                                  */
+/* -------------------------------------------------------------------------- */
+
+/** @brief Default MQTT broker address (unconfigured). */
+#define MQTT_BROKER_DEF        ""
 
 /** @brief Default MQTT broker port. */
 #define MQTT_PORT_DEF          8883
 
-/** @brief Default MQTT username. */
-#define MQTT_USERNAME_DEF      "Aishwarya"
+/** @brief Default MQTT client ID (unconfigured). */
+#define MQTT_CLIENT_ID_DEF     ""
 
-/** @brief Default MQTT password. */
-#define MQTT_PASSWORD_DEF      "password"
+/** @brief Default CA certificate path. */
+#define MQTT_CA_CERT_DEF       "/etc/ssl/certs/AmazonRootCA1.pem"
+
+/** @brief Default device certificate path. */
+#define MQTT_DEVICE_CERT_DEF   "/etc/ssl/certs/device-certificate.pem.crt"
+
+/** @brief Default device private key path. */
+#define MQTT_PRIVATE_KEY_DEF   "/etc/ssl/private/device-private.pem.key"
+
+/** @brief Default MQTT publish topic. */
+#define MQTT_TOPIC_DEF         "modbus/data"
+
+/* -------------------------------------------------------------------------- */
+/* Default OTA Configuration                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** @brief Default OTA enable state (disabled). */
+#define OTA_ENABLE_DEF         0
+
+/** @brief Default OTA app command topic pattern. */
+#define OTA_APP_TOPIC_DEF      "devices/%s/ota/app"
+
+/** @brief Default OTA system command topic pattern. */
+#define OTA_SYSTEM_TOPIC_DEF   "devices/%s/ota/system"
+
+/** @brief Default OTA status report topic pattern. */
+#define OTA_STATUS_TOPIC_DEF   "devices/%s/ota/status"
+
+/** @brief Default OTA download directory. */
+#define OTA_DOWNLOAD_DIR_DEF   "/tmp/ota"
+
+/** @brief Default application version string. */
+#define APP_VERSION_DEF        "1.0.0"
+
+/** @brief Default application binary path on board. */
+#define APP_BINARY_PATH_DEF    "/home/root/edb_c/linking/main"
 
 /* -------------------------------------------------------------------------- */
 /* Default Polling Configuration                                              */
@@ -99,7 +149,7 @@ typedef struct
     /** @brief Device identifier. */
     char device_id[64];
 
-    /* Modbus */
+    /* Modbus RTU */
 
     /** @brief Modbus serial port. */
     char modbus_port[64];
@@ -116,7 +166,21 @@ typedef struct
     /** @brief Modbus stop bits. */
     int modbus_stop_bits;
 
-    /* MQTT */
+    /* Modbus TCP */
+
+    /** @brief Modbus TCP enable flag. */
+    int modbus_tcp_enable;
+
+    /** @brief Modbus TCP slave IP address. */
+    char modbus_tcp_ip[64];
+
+    /** @brief Modbus TCP port number. */
+    int modbus_tcp_port;
+
+    /** @brief Modbus TCP slave ID. */
+    int modbus_tcp_slave_id;
+
+    /* MQTT (AWS IoT Core) */
 
     /** @brief MQTT broker hostname. */
     char mqtt_broker[256];
@@ -124,11 +188,20 @@ typedef struct
     /** @brief MQTT broker port. */
     int mqtt_port;
 
-    /** @brief MQTT username. */
-    char mqtt_user[64];
+    /** @brief MQTT client ID (AWS IoT thing name). */
+    char mqtt_client_id[128];
 
-    /** @brief MQTT password. */
-    char mqtt_pass[64];
+    /** @brief Path to CA certificate (AmazonRootCA1.pem). */
+    char mqtt_ca_cert[256];
+
+    /** @brief Path to device certificate. */
+    char mqtt_device_cert[256];
+
+    /** @brief Path to device private key. */
+    char mqtt_private_key[256];
+
+    /** @brief MQTT publish topic. */
+    char mqtt_topic[128];
 
     /* Polling */
 
@@ -148,6 +221,29 @@ typedef struct
 
     /** @brief Wi-Fi country code. */
     char wifi_country[8];
+
+    /* OTA */
+
+    /** @brief OTA enable flag. */
+    int ota_enable;
+
+    /** @brief MQTT topic for app OTA commands. */
+    char ota_app_topic[128];
+
+    /** @brief MQTT topic for system OTA commands. */
+    char ota_system_topic[128];
+
+    /** @brief MQTT topic for OTA status reports. */
+    char ota_status_topic[128];
+
+    /** @brief Directory for OTA downloads. */
+    char ota_download_dir[256];
+
+    /** @brief Current application version. */
+    char app_version[32];
+
+    /** @brief Path to the application binary on the board. */
+    char app_binary_path[256];
 
 } AppSettings;
 
@@ -187,6 +283,18 @@ void settings_defaults(void);
  * - -1 if the configuration file cannot be loaded.
  */
 int settings_load(void);
+
+/**
+ * @brief Reloads the application configuration.
+ *
+ * Re-reads the configuration from ::SETTINGS_FILE.
+ * Used by the SIGHUP handler for hot-reload.
+ *
+ * @return
+ * - 0 on success.
+ * - -1 if the configuration file cannot be loaded.
+ */
+int settings_reload(void);
 
 /* -------------------------------------------------------------------------- */
 /* Convenience Getters                                                        */

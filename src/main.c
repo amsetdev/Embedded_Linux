@@ -5,13 +5,14 @@
  * This application:
  * - Loads application configuration from smart_rtu_config.json.
  * - Applies Wi-Fi configuration from the generated JSON file.
- * - Reads Modbus RTU devices over RS485.
- * - Reads Modbus TCP devices.
- * - Publishes collected data to MQTT.
+ * - Reads Modbus RTU devices over RS485 via the fieldbus abstraction.
+ * - Reads Modbus TCP devices (when enabled in config).
+ * - Publishes collected data to AWS IoT Core via MQTT (X.509 mTLS).
  * - Stores data locally when required.
  * - Synchronizes the RTC using NTP.
  * - Updates the display and touch interface.
  * - Handles graceful shutdown.
+ * - Supports SIGHUP for configuration hot-reload.
  *
  * Network management:
  * - Linux/systemd manages Ethernet and Wi-Fi services.
@@ -32,8 +33,10 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <string.h>
 
 #include "modbus.h"
+#include "fieldbus.h"
 #include "display.h"
 #include "settings.h"
 #include "data.h"
@@ -44,6 +47,7 @@
 #include "drive_logger.h"
 #include "rtc.h"
 #include "wifi.h"
+#include "ota.h"
 
 /* -------------------------------------------------------------------------- */
 /* Global application state                                                   */
@@ -55,6 +59,13 @@
  * Set to zero by SIGINT/SIGTERM to stop all worker threads.
  */
 volatile int running = 1;
+
+/**
+ * @brief Configuration reload flag.
+ *
+ * Set to 1 by SIGHUP to trigger hot-reload of settings and MQTT.
+ */
+static volatile sig_atomic_t reload_requested = 0;
 
 /**
  * @brief Modbus polling cycle counter.
@@ -87,9 +98,24 @@ static pthread_t mb_thread_id;
 static pthread_t mb_tcp_thread_id;
 
 /**
+ * @brief Indicates whether the Modbus TCP thread was started.
+ */
+static int mb_tcp_started = 0;
+
+/**
  * @brief RTC synchronization thread handle.
  */
 static pthread_t rtc_thread_id;
+
+/**
+ * @brief OTA update thread handle.
+ */
+static pthread_t ota_thread_id;
+
+/**
+ * @brief Indicates whether the OTA thread was started.
+ */
+static int ota_started = 0;
 
 /* -------------------------------------------------------------------------- */
 /* Signal handling                                                            */
@@ -105,6 +131,21 @@ static void handle_signal(int sig)
     (void)sig;
 
     running = 0;
+}
+
+/**
+ * @brief SIGHUP handler for configuration hot-reload.
+ *
+ * Sets a flag that is checked in the main loop. The actual
+ * reload is performed in the main thread context.
+ *
+ * @param sig Received signal number.
+ */
+static void handle_sighup(int sig)
+{
+    (void)sig;
+
+    reload_requested = 1;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -129,7 +170,6 @@ static void handle_signal(int sig)
 static void *rtc_sync_thread_func(void *arg)
 {
     (void)arg;
-
     while (running)
     {
         int result = rtc_main();
@@ -268,22 +308,13 @@ int main(void)
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
+    signal(SIGHUP, handle_sighup);
 
     /* ------------------------------------------------------------------ */
     /* Start drive logger                                                */
     /* ------------------------------------------------------------------ */
 
     drive_logger_start();
-
-    /* ------------------------------------------------------------------ */
-    /* Modbus TCP configuration                                          */
-    /* ------------------------------------------------------------------ */
-
-    static mb_thread_arg_t mb_arg =
-        {
-            .slave_ip = "192.168.0.101",
-            .slave_port = 0,
-            .slave_id = 0};
 
     /* ------------------------------------------------------------------ */
     /* Load application configuration                                    */
@@ -378,9 +409,22 @@ int main(void)
            cfg.modbus_baud,
            cfg.modbus_slave);
 
-    printf("  MQTT     : %s:%d\n",
+    printf("  MQTT     : %s:%d (client: %s)\n",
            cfg.mqtt_broker,
-           cfg.mqtt_port);
+           cfg.mqtt_port,
+           cfg.mqtt_client_id);
+
+    printf("  MQTT TLS : CA=%s\n",
+           cfg.mqtt_ca_cert);
+
+    printf("             Cert=%s\n",
+           cfg.mqtt_device_cert);
+
+    printf("             Key=%s\n",
+           cfg.mqtt_private_key);
+
+    printf("  Topic    : %s\n",
+           cfg.mqtt_topic);
 
     printf("  RS485 DE : PE10 (gpiochip4 line 10)\n");
 
@@ -392,40 +436,28 @@ int main(void)
            cfg.interval);
 
     /* ------------------------------------------------------------------ */
-    /* Initialize RS485 GPIO                                             */
+    /* Initialize Modbus RTU via fieldbus abstraction                     */
     /* ------------------------------------------------------------------ */
 
-    if (rs485_gpio_init() < 0)
+    fieldbus_config_t rtu_cfg;
+    memset(&rtu_cfg, 0, sizeof(rtu_cfg));
+
+    strncpy(rtu_cfg.protocol, "modbus_rtu", sizeof(rtu_cfg.protocol) - 1);
+    strncpy(rtu_cfg.serial_port, cfg.modbus_port, sizeof(rtu_cfg.serial_port) - 1);
+    rtu_cfg.baud      = cfg.modbus_baud;
+    rtu_cfg.slave_id  = cfg.modbus_slave;
+    strncpy(rtu_cfg.parity, cfg.modbus_parity, sizeof(rtu_cfg.parity) - 1);
+    rtu_cfg.stop_bits = cfg.modbus_stop_bits;
+
+    if (!data_init_driver(fieldbus_get_modbus_rtu(), &rtu_cfg))
     {
         fprintf(stderr,
-                "[WARN] RS485 GPIO init failed - "
-                "DE pin uncontrolled\n");
-    }
-
-    /* Put RS485 transceiver into receive mode */
-
-    rs485_rx();
-
-    /* ------------------------------------------------------------------ */
-    /* Open Modbus RTU UART                                               */
-    /* ------------------------------------------------------------------ */
-
-    if (uart_open(cfg.modbus_port, cfg.modbus_baud) < 0)
-    {
-        fprintf(stderr,
-                "[ERROR] Cannot open %s\n",
-                cfg.modbus_port);
-
-        rs485_gpio_close();
+                "[ERROR] Cannot initialize Modbus RTU driver\n");
 
         drive_logger_stop();
 
         return 1;
     }
-
-    printf("[UART] Opened %s @ %d baud\n",
-           cfg.modbus_port,
-           cfg.modbus_baud);
 
     /* ------------------------------------------------------------------ */
     /* Initialize display                                                */
@@ -478,7 +510,7 @@ int main(void)
                  1);
 
         fb_str_c(110,
-                 "HiveMQ Cloud MQTT",
+                 "AWS IoT Core MQTT",
                  COL_GRAY,
                  COL_BLUE,
                  1);
@@ -514,8 +546,7 @@ int main(void)
         fprintf(stderr,
                 "[ERROR] Failed to load register configuration\n");
 
-        uart_close();
-        rs485_gpio_close();
+        data_close_driver();
 
         if (disp_ok)
             drm_cleanup();
@@ -534,6 +565,33 @@ int main(void)
     http_init();
 
     /* ------------------------------------------------------------------ */
+    /* Start OTA thread (if enabled)                                      */
+    /* ------------------------------------------------------------------ */
+
+    if (cfg.ota_enable)
+    {
+        if (ota_init())
+        {
+            if (pthread_create(&ota_thread_id,
+                               NULL,
+                               ota_thread_func,
+                               NULL) == 0)
+            {
+                ota_started = 1;
+                printf("[OTA] OTA thread started\n");
+            }
+            else
+            {
+                perror("[WARN] Failed to create OTA thread");
+            }
+        }
+    }
+    else
+    {
+        printf("[OTA] OTA disabled by configuration\n");
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Start Modbus RTU polling thread                                    */
     /* ------------------------------------------------------------------ */
 
@@ -547,8 +605,7 @@ int main(void)
         mqtt_cleanup();
         http_cleanup();
 
-        uart_close();
-        rs485_gpio_close();
+        data_close_driver();
 
         if (disp_ok)
             drm_cleanup();
@@ -561,35 +618,56 @@ int main(void)
     printf("[MB] Modbus RTU thread started\n");
 
     /* ------------------------------------------------------------------ */
-    /* Start Modbus TCP polling thread                                   */
+    /* Start Modbus TCP polling thread (if enabled)                      */
     /* ------------------------------------------------------------------ */
 
-    if (pthread_create(&mb_tcp_thread_id,
-                       NULL,
-                       mb_thread_func1,
-                       &mb_arg) != 0)
+    if (cfg.modbus_tcp_enable && cfg.modbus_tcp_ip[0] != '\0')
     {
-        perror("[ERROR] Failed to create Modbus TCP thread");
+        mb_thread_arg_t mb_arg;
+        memset(&mb_arg, 0, sizeof(mb_arg));
 
-        running = 0;
+        strncpy(mb_arg.slave_ip,
+                cfg.modbus_tcp_ip,
+                sizeof(mb_arg.slave_ip) - 1);
 
-        pthread_join(mb_thread_id, NULL);
+        mb_arg.slave_port = cfg.modbus_tcp_port;
+        mb_arg.slave_id   = cfg.modbus_tcp_slave_id;
 
-        mqtt_cleanup();
-        http_cleanup();
+        if (pthread_create(&mb_tcp_thread_id,
+                           NULL,
+                           mb_thread_func1,
+                           &mb_arg) != 0)
+        {
+            perror("[ERROR] Failed to create Modbus TCP thread");
 
-        uart_close();
-        rs485_gpio_close();
+            running = 0;
 
-        if (disp_ok)
-            drm_cleanup();
+            pthread_join(mb_thread_id, NULL);
 
-        drive_logger_stop();
+            mqtt_cleanup();
+            http_cleanup();
 
-        return 1;
+            data_close_driver();
+
+            if (disp_ok)
+                drm_cleanup();
+
+            drive_logger_stop();
+
+            return 1;
+        }
+
+        mb_tcp_started = 1;
+
+        printf("[MB] Modbus TCP thread started (%s:%d slave %d)\n",
+               cfg.modbus_tcp_ip,
+               cfg.modbus_tcp_port,
+               cfg.modbus_tcp_slave_id);
     }
-
-    printf("[MB] Modbus TCP thread started\n");
+    else
+    {
+        printf("[MB] Modbus TCP disabled by configuration\n");
+    }
 
     /* ------------------------------------------------------------------ */
     /* Start RTC synchronization thread                                  */
@@ -605,13 +683,14 @@ int main(void)
         running = 0;
 
         pthread_join(mb_thread_id, NULL);
-        pthread_join(mb_tcp_thread_id, NULL);
+
+        if (mb_tcp_started)
+            pthread_join(mb_tcp_thread_id, NULL);
 
         mqtt_cleanup();
         http_cleanup();
 
-        uart_close();
-        rs485_gpio_close();
+        data_close_driver();
 
         if (disp_ok)
             drm_cleanup();
@@ -637,6 +716,31 @@ int main(void)
 
     while (running)
     {
+        /* -------------------------------------------------------------- */
+        /* SIGHUP hot-reload                                             */
+        /* -------------------------------------------------------------- */
+
+        if (reload_requested)
+        {
+            reload_requested = 0;
+
+            printf("[MAIN] SIGHUP received -- reloading configuration\n");
+
+            settings_reload();
+
+            mqtt_cleanup();
+            mqtt_init();
+
+            printf("[MAIN] Config reloaded: broker=%s client=%s topic=%s\n",
+                   cfg.mqtt_broker,
+                   cfg.mqtt_client_id,
+                   cfg.mqtt_topic);
+        }
+
+        /* -------------------------------------------------------------- */
+        /* Display update                                                */
+        /* -------------------------------------------------------------- */
+
         touch_poll();
 
         if (cur_screen == SCREEN_SETTINGS)
@@ -684,19 +788,22 @@ int main(void)
 
     pthread_join(mb_thread_id, NULL);
 
-    pthread_join(mb_tcp_thread_id, NULL);
+    if (mb_tcp_started)
+        pthread_join(mb_tcp_thread_id, NULL);
 
     pthread_join(rtc_thread_id, NULL);
 
+    if (ota_started)
+    {
+        ota_cleanup();
+        pthread_join(ota_thread_id, NULL);
+    }
+
     /* ------------------------------------------------------------------ */
-    /* RS485 cleanup                                                     */
+    /* Fieldbus driver cleanup                                           */
     /* ------------------------------------------------------------------ */
 
-    rs485_rx();
-
-    rs485_gpio_close();
-
-    uart_close();
+    data_close_driver();
 
     /* ------------------------------------------------------------------ */
     /* MQTT / HTTP cleanup                                               */

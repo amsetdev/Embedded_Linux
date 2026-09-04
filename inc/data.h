@@ -4,13 +4,15 @@
  *
  * This module loads the register list from
  * smart_rtu_config.json and provides APIs
- * for reading Modbus registers.
+ * for reading Modbus registers through the
+ * fieldbus abstraction layer.
  */
 
 #ifndef DATA_H
 #define DATA_H
 
 #include "modbus.h"
+#include "fieldbus.h"
 #include "json.h"
 
 #ifdef __cplusplus
@@ -62,21 +64,48 @@ typedef struct
 
     /** Data type
      *  'w' = uint16
-     *  'd' = float
-     *  etc.
+     *  'f' = float32 (2 registers)
+     *  'b' = bool (coil/discrete)
      */
     char data_type;
 
     /** Engineering unit */
     char unit[UNIT_MAX];
 
-    /** Latest value */
+    /** Latest value (integer representation) */
     int value;
+
+    /** Float value (used when data_type == 'f') */
+    float float_value;
 
     /** Valid flag */
     int valid;
 
 } ModbusPoint;
+
+/*-----------------------------------------------------------
+ * Fieldbus Driver Management
+ *----------------------------------------------------------*/
+
+/**
+ * @brief Initialize the fieldbus driver for register reading.
+ *
+ * Sets the driver and configuration used by read_point()
+ * and read_all_points().
+ *
+ * @param drv    Pointer to the fieldbus driver vtable.
+ * @param config Pointer to the driver configuration.
+ * @return 1 on success, 0 on failure.
+ */
+int data_init_driver(const fieldbus_driver_t *drv,
+                     const fieldbus_config_t *config);
+
+/**
+ * @brief Close the fieldbus driver.
+ *
+ * Releases all resources held by the active driver.
+ */
+void data_close_driver(void);
 
 /*-----------------------------------------------------------
  * Public API

@@ -55,45 +55,6 @@ extern "C" {
 #define DB_PATH                     "/tmp/modbus_data.db"
 
 /* -------------------------------------------------------------------------- */
-/* MQTT Configuration                                                         */
-/* -------------------------------------------------------------------------- */
-
-/**
- * @brief MQTT broker hostname.
- */
-#define MQTT_BROKER                  "25d1470809e1409796c6dd8bd937c33c.s1.eu.hivemq.cloud"
-
-/**
- * @brief MQTT broker port.
- */
-#define MQTT_PORT                   8883
-
-/**
- * @brief MQTT publish topic.
- */
-#define MQTT_TOPIC                  "modbus/data"
-
-/**
- * @brief MQTT username.
- */
-#define MQTT_USERNAME               "Aishwarya"
-
-/**
- * @brief MQTT password.
- */
-#define MQTT_PASSWORD               "password"
-
-/**
- * @brief MQTT client identifier.
- */
-#define MQTT_CLIENT_ID              "stm32mp157_modbus_master"
-
-/**
- * @brief MQTT keep-alive interval in seconds.
- */
-#define MQTT_KEEPALIVE              60
-
-/* -------------------------------------------------------------------------- */
 /* Data Types                                                                 */
 /* -------------------------------------------------------------------------- */
 
