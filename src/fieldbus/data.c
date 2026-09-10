@@ -6,7 +6,6 @@
  */
 
 #include "data.h"
-#include "modbus.h"
 #include "settings.h"
 #include "json.h"
 
@@ -15,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 static ModbusPoint points[MAX_POINTS];
 static int point_count = 0;
@@ -79,11 +79,21 @@ void data_close_driver(void)
 /* Public API                                                */
 /*-----------------------------------------------------------*/
 
+/**
+ * @brief Get pointer to the configured register list.
+ *
+ * @return Pointer to the internal ModbusPoint array.
+ */
 ModbusPoint *data_get_points(void)
 {
     return points;
 }
 
+/**
+ * @brief Get the number of configured registers.
+ *
+ * @return Number of registers parsed from configuration.
+ */
 int data_get_count(void)
 {
     return point_count;
@@ -121,6 +131,8 @@ static char data_type_from_string(const char *s)
 {
     if (strcmp(s, "float") == 0 || strcmp(s, "float32") == 0)
         return 'f';
+    if (strcmp(s, "int32") == 0)
+        return 'd';
     if (strcmp(s, "bool") == 0)
         return 'b';
 
@@ -213,6 +225,18 @@ int parse_registers(void)
         points[point_count].valid = 0;
         points[point_count].value = 0;
 
+        /* Per-register slave_id; default to global modbus_slave. */
+        int sid = 0;
+        if (json_get_int_from(p, "slave_id", &sid) == 0 &&
+            sid >= 1 && sid <= 247)
+        {
+            points[point_count].slave_id = sid;
+        }
+        else
+        {
+            points[point_count].slave_id = settings_get_slave();
+        }
+
         point_count++;
 
         p = strchr(p, '}');
@@ -265,7 +289,7 @@ static fb_reg_type_t map_reg_type(RegType reg_type)
  */
 /*-----------------------------------------------------------*/
 
-static int read_point_float(ModbusPoint *pt)
+static int read_point_32bit(ModbusPoint *pt)
 {
     fb_reg_type_t rt = map_reg_type(pt->reg_type);
 
@@ -281,19 +305,30 @@ static int read_point_float(ModbusPoint *pt)
         {
             /* Big-endian word order: regs[0] = high, regs[1] = low */
             uint32_t raw = ((uint32_t)regs[0] << 16) | regs[1];
-            float fval;
-            memcpy(&fval, &raw, sizeof(fval));
 
-            pt->float_value = fval;
-            pt->value = (int)fval;
+            if (pt->data_type == 'f')
+            {
+                float fval;
+                memcpy(&fval, &raw, sizeof(fval));
+                pt->float_value = fval;
+                pt->value = (int)fval;
+            }
+            else
+            {
+                /* int32 */
+                pt->value = (int32_t)raw;
+                pt->float_value = (float)pt->value;
+            }
+
             pt->valid = 1;
             return 1;
         }
 
-        printf("[DATA] Retry %d : %s (%d) [float]\n",
+        printf("[DATA] Retry %d : %s (%d) [%s]\n",
                retry + 1,
                pt->label,
-               pt->address);
+               pt->address,
+               pt->data_type == 'f' ? "float" : "int32");
 
         usleep(50000);
     }
@@ -324,9 +359,16 @@ int read_point(ModbusPoint *pt)
         return 0;
     }
 
-    /* Float registers require a 2-register block read. */
-    if (pt->data_type == 'f')
-        return read_point_float(pt);
+    /* Switch to the register's slave ID before reading. */
+    if (rtu_driver->set_slave &&
+        pt->slave_id > 0)
+    {
+        rtu_driver->set_slave(rtu_ctx, pt->slave_id);
+    }
+
+    /* 32-bit types (float32, int32) require a 2-register block read. */
+    if (pt->data_type == 'f' || pt->data_type == 'd')
+        return read_point_32bit(pt);
 
     fb_reg_type_t rt = map_reg_type(pt->reg_type);
 
@@ -365,7 +407,7 @@ int read_point(ModbusPoint *pt)
 
 void read_all_points(void)
 {
-    extern volatile int running;
+    extern atomic_int running;
 
     int success = 0;
     int failed = 0;
@@ -386,4 +428,108 @@ void read_all_points(void)
            success,
            failed,
            (long)(time(NULL) - start));
+}
+
+/*-----------------------------------------------------------*/
+/**
+ * @brief Write a single register or coil via the fieldbus driver.
+ *
+ * @param slave_id Modbus slave address (1-247).
+ * @param reg_type Register type (REG_HOLDING or REG_COIL).
+ * @param addr     Register or coil address.
+ * @param value    Value to write.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+/*-----------------------------------------------------------*/
+
+int data_write_register(int slave_id,
+                        RegType reg_type,
+                        uint16_t addr,
+                        uint16_t value)
+{
+    if (!rtu_driver || !rtu_ctx)
+    {
+        fprintf(stderr, "[DATA] No driver initialized for write\n");
+        return 0;
+    }
+
+    if (!rtu_driver->write_register)
+    {
+        fprintf(stderr, "[DATA] Driver does not support write\n");
+        return 0;
+    }
+
+    if (rtu_driver->set_slave && slave_id > 0)
+        rtu_driver->set_slave(rtu_ctx, slave_id);
+
+    fb_reg_type_t rt = map_reg_type(reg_type);
+
+    fieldbus_status_t rc =
+        rtu_driver->write_register(rtu_ctx, rt, addr, value);
+
+    if (rc == FIELDBUS_OK)
+    {
+        printf("[DATA] Write OK: slave=%d addr=%d value=%u\n",
+               slave_id, addr, (unsigned)value);
+        return 1;
+    }
+
+    fprintf(stderr, "[DATA] Write FAIL: slave=%d addr=%d value=%u\n",
+            slave_id, addr, (unsigned)value);
+
+    return 0;
+}
+
+/*-----------------------------------------------------------*/
+/**
+ * @brief Write a contiguous block of registers or coils.
+ *
+ * @param slave_id Modbus slave address (1-247).
+ * @param reg_type Register type (REG_HOLDING or REG_COIL).
+ * @param start    Starting address.
+ * @param count    Number of registers/coils.
+ * @param values   Array of values to write.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+/*-----------------------------------------------------------*/
+
+int data_write_block(int slave_id,
+                     RegType reg_type,
+                     uint16_t start,
+                     int count,
+                     const uint16_t *values)
+{
+    if (!rtu_driver || !rtu_ctx)
+    {
+        fprintf(stderr, "[DATA] No driver initialized for write\n");
+        return 0;
+    }
+
+    if (!rtu_driver->write_block)
+    {
+        fprintf(stderr, "[DATA] Driver does not support block write\n");
+        return 0;
+    }
+
+    if (rtu_driver->set_slave && slave_id > 0)
+        rtu_driver->set_slave(rtu_ctx, slave_id);
+
+    fb_reg_type_t rt = map_reg_type(reg_type);
+
+    fieldbus_status_t rc =
+        rtu_driver->write_block(rtu_ctx, rt, start, count, values);
+
+    if (rc == FIELDBUS_OK)
+    {
+        printf("[DATA] Block write OK: slave=%d start=%d count=%d\n",
+               slave_id, start, count);
+        return 1;
+    }
+
+    fprintf(stderr, "[DATA] Block write FAIL: slave=%d start=%d count=%d\n",
+            slave_id, start, count);
+
+    return 0;
 }

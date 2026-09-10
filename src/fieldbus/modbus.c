@@ -1,3 +1,13 @@
+/**
+ * @file modbus.c
+ * @brief Modbus RTU low-level communication implementation.
+ *
+ * Provides RS-485 GPIO direction control, UART serial
+ * communication, CRC-16 calculation, and Modbus RTU
+ * frame construction and transaction handling for
+ * read and write function codes.
+ */
+
 #include "modbus.h"
 
 #include <stdio.h>
@@ -11,12 +21,14 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <linux/gpio.h>
+#include <linux/serial.h>
 
 #define RS485_GPIOCHIP  "/dev/gpiochip4"
 #define RS485_GPIO_LINE 10
 
 static int gpio_fd   = -1;
 static int gpio_line = -1;
+static int kernel_rs485 = 0;  /**< 1 when kernel manages DE pin. */
 
 int uart_fd = -1;  /**< Raw UART file descriptor. */
 
@@ -62,7 +74,7 @@ int rs485_gpio_init(void)
  */
 void rs485_tx(void)
 {
-    if (gpio_line < 0)
+    if (kernel_rs485 || gpio_line < 0)
         return;
 
     struct gpiohandle_data d;
@@ -81,7 +93,7 @@ void rs485_tx(void)
  */
 void rs485_rx(void)
 {
-    if (gpio_line < 0)
+    if (kernel_rs485 || gpio_line < 0)
         return;
 
     struct gpiohandle_data d;
@@ -169,6 +181,43 @@ int uart_open(const char *port, int baud)
     }
 
     tcflush(uart_fd, TCIOFLUSH);
+
+    /*
+     * Try kernel-managed RS485 mode.
+     *
+     * The STM32MP1 USART has hardware DE control that switches
+     * automatically with sub-microsecond precision. When enabled,
+     * GPIO-based rs485_tx()/rs485_rx() calls are skipped.
+     *
+     * NOTE: On the DK2, the RS485 DE pin may be routed to a GPIO
+     * (PE10) rather than the USART's hardware RTS/DE pin. If kernel
+     * RS485 reports success but doesn't actually control the
+     * transceiver, set kernel_rs485 = 0 to fall back to GPIO.
+     */
+    struct serial_rs485 rs485conf;
+    memset(&rs485conf, 0, sizeof(rs485conf));
+    rs485conf.flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
+    rs485conf.delay_rts_before_send = 0;
+    rs485conf.delay_rts_after_send  = 0;
+
+    if (ioctl(uart_fd, TIOCSRS485, &rs485conf) == 0)
+    {
+        /*
+         * Kernel accepted RS485 config, but on DK2 the DE pin
+         * may not be wired to USART RTS. Disable kernel RS485
+         * and keep using GPIO PE10 until hardware is verified.
+         */
+        rs485conf.flags = 0;
+        ioctl(uart_fd, TIOCSRS485, &rs485conf);
+        kernel_rs485 = 0;
+        printf("[UART] Kernel RS485 available but disabled — using GPIO DE\n");
+    }
+    else
+    {
+        kernel_rs485 = 0;
+        printf("[UART] Kernel RS485 not available, using GPIO DE\n");
+    }
+
     return 0;
 }
 
@@ -363,6 +412,28 @@ int mb_reply_len(uint8_t fc)
              */
             return 7;
 
+        case 0x05:
+        case 0x06:
+            /*
+             * Write single coil/register echo response:
+             *
+             * slave + fc + addr_hi + addr_lo + val_hi + val_lo + CRC
+             *
+             * = 8 bytes
+             */
+            return 8;
+
+        case 0x0F:
+        case 0x10:
+            /*
+             * Write multiple echo response:
+             *
+             * slave + fc + addr_hi + addr_lo + qty_hi + qty_lo + CRC
+             *
+             * = 8 bytes
+             */
+            return 8;
+
         default:
             return -1;
     }
@@ -494,42 +565,52 @@ int mb_transaction(uint8_t slave,
 
 
     /*
-     * Give the slave time to respond.
+     * Read everything available — request echo + response.
+     * This helps diagnose whether RE# is tied LOW (echo present)
+     * or if there's bus contention.
      */
     int n =
         uart_read_timeout(rx,
-                          expected,
-                          500);
+                          sizeof(rx),
+                          RX_TIMEOUT_MS);
 
-
-    if (n < expected)
-    {
-        printf("[MB] Timeout: received %d/%d bytes\n",
-               n,
-               expected);
-        if (n > 0) {
-            printf("[MB] RX(%d): ", n);
-            for (int i = 0; i < n; i++)
-                printf("%02X ", rx[i]);
-            printf("\n");
-        }
-
-        return 0;
-    }
-
-    printf("[MB] RX(%d): ", n);
+    printf("[MB] RAW RX(%d): ", n);
     for (int i = 0; i < n; i++)
         printf("%02X ", rx[i]);
     printf("\n");
+
+    /*
+     * If we received more bytes than expected, check for TX echo.
+     * Echo would be the first tx_len bytes matching our TX frame.
+     */
+    uint8_t *resp = rx;
+    int resp_len = n;
+
+    if (n >= expected + tx_len &&
+        memcmp(rx, tx, tx_len) == 0)
+    {
+        printf("[MB] Echo detected (%d bytes) — stripping\n", tx_len);
+        resp = rx + tx_len;
+        resp_len = n - tx_len;
+    }
+
+    if (resp_len < expected)
+    {
+        printf("[MB] Timeout: received %d/%d bytes\n",
+               resp_len,
+               expected);
+
+        return 0;
+    }
 
 
     /*
      * Check slave address.
      */
-    if (rx[0] != slave)
+    if (resp[0] != slave)
     {
         printf("[MB] Invalid slave response: %02X\n",
-               rx[0]);
+               resp[0]);
 
         return 0;
     }
@@ -540,10 +621,10 @@ int mb_transaction(uint8_t slave,
      *
      * Exception function = requested function | 0x80
      */
-    if (rx[1] == (uint8_t)(fc | 0x80))
+    if (resp[1] == (uint8_t)(fc | 0x80))
     {
         printf("[MB] Modbus exception: code=%02X\n",
-               rx[2]);
+               resp[2]);
 
         return 0;
     }
@@ -552,11 +633,11 @@ int mb_transaction(uint8_t slave,
     /*
      * Check function code.
      */
-    if (rx[1] != fc)
+    if (resp[1] != fc)
     {
         printf("[MB] Invalid function: expected=%02X got=%02X\n",
                fc,
-               rx[1]);
+               resp[1]);
 
         return 0;
     }
@@ -567,10 +648,10 @@ int mb_transaction(uint8_t slave,
      */
     if (fc == 0x03 || fc == 0x04)
     {
-        if (rx[2] != 2)
+        if (resp[2] != 2)
         {
             printf("[MB] Invalid byte count: %d\n",
-                   rx[2]);
+                   resp[2]);
 
             return 0;
         }
@@ -581,15 +662,15 @@ int mb_transaction(uint8_t slave,
          * Modbus uses big-endian register data.
          */
         *value =
-            ((uint16_t)rx[3] << 8) |
-            rx[4];
+            ((uint16_t)resp[3] << 8) |
+            resp[4];
     }
     else if (fc == 0x01 || fc == 0x02)
     {
-        if (rx[2] != 1)
+        if (resp[2] != 1)
         {
             printf("[MB] Invalid byte count: %d\n",
-                   rx[2]);
+                   resp[2]);
 
             return 0;
         }
@@ -598,7 +679,7 @@ int mb_transaction(uint8_t slave,
          * First coil/input bit.
          */
         *value =
-            (rx[3] & 0x01) ? 1 : 0;
+            (resp[3] & 0x01) ? 1 : 0;
     }
 
 
@@ -606,11 +687,11 @@ int mb_transaction(uint8_t slave,
      * CRC check.
      */
     uint16_t received_crc =
-        ((uint16_t)rx[n - 1] << 8) |
-        rx[n - 2];
+        ((uint16_t)resp[expected - 1] << 8) |
+        resp[expected - 2];
 
     uint16_t calculated_crc =
-        mb_crc16(rx, n - 2);
+        mb_crc16(resp, expected - 2);
 
     if (received_crc != calculated_crc)
     {
@@ -621,6 +702,358 @@ int mb_transaction(uint8_t slave,
         return 0;
     }
 
+
+    return 1;
+}
+
+/**
+ * @brief Performs a Modbus RTU write-single transaction (FC05 / FC06).
+ *
+ * The slave echoes back the exact request frame on success.
+ *
+ * FC05 (Write Single Coil):
+ *   value = 0xFF00 for ON, 0x0000 for OFF.
+ *
+ * FC06 (Write Single Register):
+ *   value = raw 16-bit register value.
+ *
+ * @param slave Modbus slave address.
+ * @param fc    Function code (0x05 or 0x06).
+ * @param addr  Register or coil address.
+ * @param value Value to write.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+int mb_write_single(uint8_t slave,
+                    uint8_t fc,
+                    uint16_t addr,
+                    uint16_t value)
+{
+    if (uart_fd < 0)
+        return 0;
+
+    if (fc != 0x05 && fc != 0x06)
+    {
+        fprintf(stderr,
+                "[MB] mb_write_single: invalid fc=0x%02X\n",
+                fc);
+        return 0;
+    }
+
+    uint8_t tx[8];
+    uint8_t rx[256];
+    int tx_len = 0;
+
+    /*
+     * Request frame:
+     *
+     * [Slave] [FC] [Addr Hi] [Addr Lo] [Value Hi] [Value Lo] [CRC Lo] [CRC Hi]
+     */
+
+    tx[tx_len++] = slave;
+    tx[tx_len++] = fc;
+    tx[tx_len++] = (uint8_t)(addr >> 8);
+    tx[tx_len++] = (uint8_t)(addr & 0xFF);
+    tx[tx_len++] = (uint8_t)(value >> 8);
+    tx[tx_len++] = (uint8_t)(value & 0xFF);
+
+    uint16_t crc = mb_crc16(tx, tx_len);
+
+    tx[tx_len++] = (uint8_t)(crc & 0xFF);
+    tx[tx_len++] = (uint8_t)(crc >> 8);
+
+    printf("[MB] TX(%d): ", tx_len);
+    for (int i = 0; i < tx_len; i++)
+        printf("%02X ", tx[i]);
+    printf("\n");
+
+    uart_flush_rx();
+    rs485_tx();
+
+    ssize_t written = write(uart_fd, tx, tx_len);
+
+    if (written != tx_len)
+    {
+        perror("[MB] write");
+        uart_drain_tx();
+        rs485_rx();
+        return 0;
+    }
+
+    uart_drain_tx();
+    rs485_rx();
+
+    /* Echo response is 8 bytes. */
+    int expected = mb_reply_len(fc);
+
+    if (expected < 0)
+        return 0;
+
+    int n = uart_read_timeout(rx, expected, 500);
+
+    if (n < expected)
+    {
+        printf("[MB] Timeout: received %d/%d bytes\n", n, expected);
+        return 0;
+    }
+
+    printf("[MB] RX(%d): ", n);
+    for (int i = 0; i < n; i++)
+        printf("%02X ", rx[i]);
+    printf("\n");
+
+    /* Validate slave address. */
+    if (rx[0] != slave)
+    {
+        printf("[MB] Invalid slave response: %02X\n", rx[0]);
+        return 0;
+    }
+
+    /* Check exception response. */
+    if (rx[1] == (uint8_t)(fc | 0x80))
+    {
+        printf("[MB] Modbus exception: code=%02X\n", rx[2]);
+        return 0;
+    }
+
+    /* Validate function code. */
+    if (rx[1] != fc)
+    {
+        printf("[MB] Invalid function: expected=%02X got=%02X\n",
+               fc, rx[1]);
+        return 0;
+    }
+
+    /* CRC check. */
+    uint16_t received_crc =
+        ((uint16_t)rx[n - 1] << 8) | rx[n - 2];
+
+    uint16_t calculated_crc =
+        mb_crc16(rx, n - 2);
+
+    if (received_crc != calculated_crc)
+    {
+        printf("[MB] CRC error: received=%04X calculated=%04X\n",
+               received_crc, calculated_crc);
+        return 0;
+    }
+
+    /* Verify echo matches request (addr + value). */
+    uint16_t echo_addr =
+        ((uint16_t)rx[2] << 8) | rx[3];
+
+    uint16_t echo_val =
+        ((uint16_t)rx[4] << 8) | rx[5];
+
+    if (echo_addr != addr || echo_val != value)
+    {
+        printf("[MB] Echo mismatch: addr=%04X/%04X val=%04X/%04X\n",
+               echo_addr, addr, echo_val, value);
+        return 0;
+    }
+
+    return 1;
+}
+
+/**
+ * @brief Performs a Modbus RTU write-multiple transaction (FC0F / FC10).
+ *
+ * FC0F (Write Multiple Coils):
+ *   Each value is treated as a single bit (0 or 1). Values are packed
+ *   into bytes for transmission.
+ *
+ * FC10 (Write Multiple Registers):
+ *   Each value is a 16-bit register value, transmitted big-endian.
+ *
+ * @param slave  Modbus slave address.
+ * @param fc     Function code (0x0F or 0x10).
+ * @param addr   Starting address.
+ * @param count  Number of coils or registers.
+ * @param values Array of values.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+int mb_write_multiple(uint8_t slave,
+                      uint8_t fc,
+                      uint16_t addr,
+                      uint16_t count,
+                      const uint16_t *values)
+{
+    if (uart_fd < 0 || values == NULL || count == 0)
+        return 0;
+
+    if (fc != 0x0F && fc != 0x10)
+    {
+        fprintf(stderr,
+                "[MB] mb_write_multiple: invalid fc=0x%02X\n",
+                fc);
+        return 0;
+    }
+
+    /*
+     * Maximum frame size:
+     *   FC10: slave(1) + fc(1) + addr(2) + qty(2) + byte_count(1)
+     *         + data(count*2) + CRC(2)  =>  9 + count*2
+     *   FC0F: slave(1) + fc(1) + addr(2) + qty(2) + byte_count(1)
+     *         + data(ceil(count/8)) + CRC(2)
+     *
+     * Limit to 123 registers (Modbus spec) or 1968 coils.
+     */
+
+    uint8_t tx[256 + 9];
+    uint8_t rx[256];
+    int tx_len = 0;
+
+    tx[tx_len++] = slave;
+    tx[tx_len++] = fc;
+    tx[tx_len++] = (uint8_t)(addr >> 8);
+    tx[tx_len++] = (uint8_t)(addr & 0xFF);
+    tx[tx_len++] = (uint8_t)(count >> 8);
+    tx[tx_len++] = (uint8_t)(count & 0xFF);
+
+    if (fc == 0x10)
+    {
+        /* FC16: Write Multiple Registers. */
+        if (count > 123)
+        {
+            fprintf(stderr,
+                    "[MB] FC16 max 123 registers, got %d\n",
+                    count);
+            return 0;
+        }
+
+        uint8_t byte_count = (uint8_t)(count * 2);
+
+        tx[tx_len++] = byte_count;
+
+        for (int i = 0; i < count; i++)
+        {
+            tx[tx_len++] = (uint8_t)(values[i] >> 8);
+            tx[tx_len++] = (uint8_t)(values[i] & 0xFF);
+        }
+    }
+    else
+    {
+        /* FC15: Write Multiple Coils. */
+        if (count > 1968)
+        {
+            fprintf(stderr,
+                    "[MB] FC0F max 1968 coils, got %d\n",
+                    count);
+            return 0;
+        }
+
+        uint8_t byte_count = (uint8_t)((count + 7) / 8);
+
+        tx[tx_len++] = byte_count;
+
+        /* Pack coil bits into bytes (LSB first). */
+        for (int b = 0; b < byte_count; b++)
+        {
+            uint8_t byte_val = 0;
+
+            for (int bit = 0; bit < 8; bit++)
+            {
+                int idx = b * 8 + bit;
+
+                if (idx >= count)
+                    break;
+
+                if (values[idx])
+                    byte_val |= (uint8_t)(1 << bit);
+            }
+
+            tx[tx_len++] = byte_val;
+        }
+    }
+
+    uint16_t crc = mb_crc16(tx, tx_len);
+
+    tx[tx_len++] = (uint8_t)(crc & 0xFF);
+    tx[tx_len++] = (uint8_t)(crc >> 8);
+
+    printf("[MB] TX(%d): ", tx_len);
+    for (int i = 0; i < tx_len; i++)
+        printf("%02X ", tx[i]);
+    printf("\n");
+
+    uart_flush_rx();
+    rs485_tx();
+
+    ssize_t written = write(uart_fd, tx, tx_len);
+
+    if (written != tx_len)
+    {
+        perror("[MB] write");
+        uart_drain_tx();
+        rs485_rx();
+        return 0;
+    }
+
+    uart_drain_tx();
+    rs485_rx();
+
+    /* Response is 8 bytes: slave + fc + addr(2) + qty(2) + CRC(2). */
+    int expected = 8;
+    int n = uart_read_timeout(rx, expected, 500);
+
+    if (n < expected)
+    {
+        printf("[MB] Timeout: received %d/%d bytes\n", n, expected);
+        return 0;
+    }
+
+    printf("[MB] RX(%d): ", n);
+    for (int i = 0; i < n; i++)
+        printf("%02X ", rx[i]);
+    printf("\n");
+
+    if (rx[0] != slave)
+    {
+        printf("[MB] Invalid slave response: %02X\n", rx[0]);
+        return 0;
+    }
+
+    if (rx[1] == (uint8_t)(fc | 0x80))
+    {
+        printf("[MB] Modbus exception: code=%02X\n", rx[2]);
+        return 0;
+    }
+
+    if (rx[1] != fc)
+    {
+        printf("[MB] Invalid function: expected=%02X got=%02X\n",
+               fc, rx[1]);
+        return 0;
+    }
+
+    /* CRC check. */
+    uint16_t received_crc =
+        ((uint16_t)rx[n - 1] << 8) | rx[n - 2];
+
+    uint16_t calculated_crc =
+        mb_crc16(rx, n - 2);
+
+    if (received_crc != calculated_crc)
+    {
+        printf("[MB] CRC error: received=%04X calculated=%04X\n",
+               received_crc, calculated_crc);
+        return 0;
+    }
+
+    /* Verify echo: starting address and quantity. */
+    uint16_t echo_addr =
+        ((uint16_t)rx[2] << 8) | rx[3];
+
+    uint16_t echo_qty =
+        ((uint16_t)rx[4] << 8) | rx[5];
+
+    if (echo_addr != addr || echo_qty != count)
+    {
+        printf("[MB] Echo mismatch: addr=%04X/%04X qty=%04X/%04X\n",
+               echo_addr, addr, echo_qty, count);
+        return 0;
+    }
 
     return 1;
 }

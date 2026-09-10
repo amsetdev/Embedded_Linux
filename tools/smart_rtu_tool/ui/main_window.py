@@ -37,7 +37,10 @@ from core.excel_import import import_excel
 from core import offline_queue, credentials
 
 
-COLUMNS = ["Label", "Address"]
+COLUMNS = ["Slave ID", "Label", "Address", "Type", "Data Type"]
+
+REG_TYPES = ["holding", "input", "coil", "discrete"]
+DATA_TYPES = ["uint16", "float32", "int32"]
 
 APP_STYLESHEET = """
 QMainWindow, QWidget { background-color: #f4f6f9; font-family: "Segoe UI", "Ubuntu", sans-serif; font-size: 10pt; }
@@ -394,10 +397,16 @@ class DeviceConfigPage(QWidget):
         self.interval_spin = QSpinBox(); self.interval_spin.setRange(1, 3600); self.interval_spin.setValue(30)
         self.interval_spin.setSuffix(" s")
         self.interval_spin.setToolTip("How often the device polls its Modbus registers.")
+        self.parity_combo = QComboBox(); self.parity_combo.addItems(["None", "Even", "Odd"])
+        self.parity_combo.setToolTip("Modbus RTU serial parity.")
+        self.stop_bits_combo = QComboBox(); self.stop_bits_combo.addItems(["1", "2"])
+        self.stop_bits_combo.setToolTip("Modbus RTU serial stop bits.")
         dev_form.addRow("Device Name / ID:", self.device_id_edit)
-        dev_form.addRow("Modbus Slave ID:", self.slave_id_spin)
+        dev_form.addRow("Default Slave ID:", self.slave_id_spin)
         dev_form.addRow("Baud Rate:", self.baud_combo)
         dev_form.addRow("Poll Interval:", self.interval_spin)
+        dev_form.addRow("Parity:", self.parity_combo)
+        dev_form.addRow("Stop Bits:", self.stop_bits_combo)
         tcp_box = QGroupBox("Modbus TCP")
         tcp_form = QFormLayout(tcp_box)
         self.tcp_enable_chk = QCheckBox("Enable")
@@ -427,80 +436,7 @@ class DeviceConfigPage(QWidget):
 
         layout.addLayout(top_row)
 
-        # --- Modbus Map Sizing -------------------------------------------
-        sizing_box = QGroupBox("Modbus Map Sizing")
-        sizing_outer = QVBoxLayout(sizing_box)
-
-        top_row = QHBoxLayout()
-        self.coils_spin = QSpinBox(); self.coils_spin.setRange(0, 9999)
-        self.coils_spin.setToolTip("Number of digital output (coil) points on this device.")
-        self.alerts_spin = QSpinBox(); self.alerts_spin.setRange(0, 9999)
-        self.alerts_spin.setToolTip("Number of alert/alarm bit points on this device.")
-        top_form = QFormLayout()
-        top_form.addRow("Coils:", self.coils_spin)
-        top_form.addRow("Alerts:", self.alerts_spin)
-        top_row.addLayout(top_form)
-        top_row.addStretch()
-        sizing_outer.addLayout(top_row)
-
-        reg_row = QHBoxLayout()
-
-        holding_box = QGroupBox("Holding Registers")
-        holding_box.setMinimumHeight(120)
-        holding_form = QFormLayout(holding_box)
-        self.holding_integers_spin = QSpinBox(); self.holding_integers_spin.setRange(0, 9999)
-        self.holding_integers_spin.setMinimumWidth(80)
-        self.holding_integers_spin.setToolTip("How many of the Holding Registers table rows (in order, from the top) are whole-number integers.")
-        self.holding_decimals_spin = QSpinBox(); self.holding_decimals_spin.setRange(0, 9999)
-        self.holding_decimals_spin.setMinimumWidth(80)
-        self.holding_decimals_spin.setToolTip("How many rows AFTER the integers above are decimal/float values.")
-        self.holding_double_integers_spin = QSpinBox(); self.holding_double_integers_spin.setRange(0, 9999)
-        self.holding_double_integers_spin.setMinimumWidth(80)
-        self.holding_double_integers_spin.setToolTip("How many rows AFTER the decimals above are double-width (32-bit) integers.")
-        holding_form.addRow("Integers:", self.holding_integers_spin)
-        holding_form.addRow("Decimals:", self.holding_decimals_spin)
-        holding_form.addRow("Double Integers:", self.holding_double_integers_spin)
-        reg_row.addWidget(holding_box)
-
-        input_box = QGroupBox("Input Registers")
-        input_box.setMinimumHeight(120)
-        input_form = QFormLayout(input_box)
-        self.input_integers_spin = QSpinBox(); self.input_integers_spin.setRange(0, 9999)
-        self.input_integers_spin.setMinimumWidth(80)
-        self.input_integers_spin.setToolTip("How many rows after all Holding Registers are whole-number Input Register integers.")
-        self.input_decimals_spin = QSpinBox(); self.input_decimals_spin.setRange(0, 9999)
-        self.input_decimals_spin.setMinimumWidth(80)
-        self.input_decimals_spin.setToolTip("How many rows after the Input integers above are decimal/float values.")
-        self.input_double_integers_spin = QSpinBox(); self.input_double_integers_spin.setRange(0, 9999)
-        self.input_double_integers_spin.setMinimumWidth(80)
-        self.input_double_integers_spin.setToolTip("How many rows after the Input decimals above are double-width (32-bit) integers.")
-        input_form.addRow("Integers:", self.input_integers_spin)
-        input_form.addRow("Decimals:", self.input_decimals_spin)
-        input_form.addRow("Double Integers:", self.input_double_integers_spin)
-        reg_row.addWidget(input_box)
-
-        sizing_outer.addLayout(reg_row)
-
-        order_hint = QLabel(
-            "Order rule: on the Data Transmission table, the first rows are treated as "
-            "Holding Integers, then Holding Decimals, then Holding Double Integers, then "
-            "Input Integers, Input Decimals, Input Double Integers — in that order."
-        )
-        order_hint.setObjectName("hintLabel"); order_hint.setWordWrap(True)
-        sizing_outer.addWidget(order_hint)
-
-        bottom_row = QHBoxLayout()
-        self.parity_combo = QComboBox(); self.parity_combo.addItems(["None", "Even", "Odd"])
-        self.parity_combo.setToolTip("Modbus RTU serial parity.")
-        self.stop_bits_combo = QComboBox(); self.stop_bits_combo.addItems(["1", "2"])
-        self.stop_bits_combo.setToolTip("Modbus RTU serial stop bits.")
-        bottom_form = QFormLayout()
-        bottom_form.addRow("Parity:", self.parity_combo)
-        bottom_form.addRow("Stop Bits:", self.stop_bits_combo)
-        bottom_row.addLayout(bottom_form)
-        bottom_row.addStretch()
-        sizing_outer.addLayout(bottom_row)
-
+        # --- Action buttons ------------------------------------------------
         cfg_action_row = QHBoxLayout()
         self.cfg_status_label = QLabel("Settings: Ready")
         self.cfg_status_label.setObjectName("miniStatusLabel")
@@ -512,7 +448,7 @@ class DeviceConfigPage(QWidget):
         self.cfg_read_btn.clicked.connect(lambda: self._run_field_action("read"))
         self.cfg_send_btn = QPushButton("Send Settings to Device")
         self.cfg_send_btn.setObjectName("sendButton")
-        self.cfg_send_btn.setToolTip("Sends everything above — Wi-Fi, Device Settings, and Modbus Map Sizing — to the device as one file.")
+        self.cfg_send_btn.setToolTip("Sends everything above — Wi-Fi, Device Settings — to the device as one file.")
         self.cfg_send_btn.clicked.connect(lambda: self._run_field_action("send"))
         self.cfg_erase_btn = QPushButton("Erase Settings on Device")
         self.cfg_erase_btn.setObjectName("eraseButton")
@@ -521,9 +457,7 @@ class DeviceConfigPage(QWidget):
         cfg_action_row.addWidget(self.cfg_read_btn)
         cfg_action_row.addWidget(self.cfg_send_btn)
         cfg_action_row.addWidget(self.cfg_erase_btn)
-        sizing_outer.addLayout(cfg_action_row)
-
-        layout.addWidget(sizing_box)
+        layout.addLayout(cfg_action_row)
 
         layout.addStretch()
 
@@ -540,22 +474,14 @@ class DeviceConfigPage(QWidget):
         config.slave_id = self.slave_id_spin.value()
         config.baud = int(self.baud_combo.currentText())
         config.interval_sec = self.interval_spin.value()
+        config.parity = self.parity_combo.currentText()
+        config.stop_bits = int(self.stop_bits_combo.currentText())
         config.wifi_ssid = self.wifi_ssid_edit.text().strip()
         config.wifi_password = self.wifi_pass_edit.text()
         config.modbus_tcp_enable = 1 if self.tcp_enable_chk.isChecked() else 0
         config.modbus_tcp_ip = self.tcp_ip_edit.text().strip()
         config.modbus_tcp_port = self.tcp_port_spin.value()
         config.modbus_tcp_slave_id = self.tcp_slave_spin.value()
-        config.coils = self.coils_spin.value()
-        config.alerts = self.alerts_spin.value()
-        config.holding_integers = self.holding_integers_spin.value()
-        config.holding_decimals = self.holding_decimals_spin.value()
-        config.holding_double_integers = self.holding_double_integers_spin.value()
-        config.input_integers = self.input_integers_spin.value()
-        config.input_decimals = self.input_decimals_spin.value()
-        config.input_double_integers = self.input_double_integers_spin.value()
-        config.parity = self.parity_combo.currentText()
-        config.stop_bits = int(self.stop_bits_combo.currentText())
         return config
 
     def load_from_config(self, config):
@@ -563,22 +489,14 @@ class DeviceConfigPage(QWidget):
         self.slave_id_spin.setValue(config.slave_id)
         self.baud_combo.setCurrentText(str(config.baud))
         self.interval_spin.setValue(config.interval_sec)
+        self.parity_combo.setCurrentText(config.parity)
+        self.stop_bits_combo.setCurrentText(str(config.stop_bits))
         self.wifi_ssid_edit.setText(config.wifi_ssid)
         self.wifi_pass_edit.setText(config.wifi_password)
         self.tcp_enable_chk.setChecked(config.modbus_tcp_enable == 1)
         self.tcp_ip_edit.setText(config.modbus_tcp_ip)
         self.tcp_port_spin.setValue(config.modbus_tcp_port)
         self.tcp_slave_spin.setValue(config.modbus_tcp_slave_id)
-        self.coils_spin.setValue(config.coils)
-        self.alerts_spin.setValue(config.alerts)
-        self.holding_integers_spin.setValue(config.holding_integers)
-        self.holding_decimals_spin.setValue(config.holding_decimals)
-        self.holding_double_integers_spin.setValue(config.holding_double_integers)
-        self.input_integers_spin.setValue(config.input_integers)
-        self.input_decimals_spin.setValue(config.input_decimals)
-        self.input_double_integers_spin.setValue(config.input_double_integers)
-        self.parity_combo.setCurrentText(config.parity)
-        self.stop_bits_combo.setCurrentText(str(config.stop_bits))
 
     def _run_field_action(self, action):
         """action: 'read' | 'send' | 'erase' — always the SAME one
@@ -592,7 +510,6 @@ class DeviceConfigPage(QWidget):
         # Transmission table too, so this is the exact same combined
         # file as "Push Data to Device" — not a settings-only subset.
         config.points = self.mw.dataPage.table_to_points()
-        config.assign_types_from_sizing()
 
         status_label = self.cfg_status_label
         buttons = [self.cfg_read_btn, self.cfg_send_btn, self.cfg_erase_btn]
@@ -917,18 +834,30 @@ class DataTransmissionPage(QWidget):
             self.serial_port_combo.addItem(f"{label} — {desc}", userData=device)
         self.mw.log(f"Refreshed serial ports — {len(ports)} found", "info")
 
-    def _add_row(self, label="", address=0):
+    def _add_row(self, slave_id=0, label="", address=0,
+                 register_type="holding", data_type="uint16"):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setItem(row, 0, QTableWidgetItem(str(label)))
-        self.table.setItem(row, 1, QTableWidgetItem(str(address)))
+        self.table.setItem(row, 0, QTableWidgetItem(str(slave_id)))
+        self.table.setItem(row, 1, QTableWidgetItem(str(label)))
+        self.table.setItem(row, 2, QTableWidgetItem(str(address)))
+        # Type dropdown
+        type_combo = QComboBox()
+        type_combo.addItems(REG_TYPES)
+        type_combo.setCurrentText(register_type)
+        self.table.setCellWidget(row, 3, type_combo)
+        # Data Type dropdown
+        dtype_combo = QComboBox()
+        dtype_combo.addItems(DATA_TYPES)
+        dtype_combo.setCurrentText(data_type)
+        self.table.setCellWidget(row, 4, dtype_combo)
         self._update_point_count()
 
     def _add_row_interactive(self):
         self._add_row()
         row = self.table.rowCount() - 1
-        self.table.setCurrentCell(row, 0)
-        self.table.editItem(self.table.item(row, 0))
+        self.table.setCurrentCell(row, 1)
+        self.table.editItem(self.table.item(row, 1))
 
     def _delete_selected_rows(self):
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
@@ -969,7 +898,8 @@ class DataTransmissionPage(QWidget):
         if replace:
             self.table.setRowCount(0)
         for p in points:
-            self._add_row(p.label, p.address)
+            self._add_row(p.slave_id, p.label, p.address,
+                          p.register_type, p.data_type)
         self._update_point_count()
         self.mw.log(f"Imported {len(points)} points from Excel: {filepath}", "success")
         if warnings:
@@ -980,28 +910,38 @@ class DataTransmissionPage(QWidget):
     def table_to_points(self):
         points = []
         for row in range(self.table.rowCount()):
-            label = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
-            addr_text = self.table.item(row, 1).text() if self.table.item(row, 1) else "0"
+            sid_text = self.table.item(row, 0).text() if self.table.item(row, 0) else "0"
+            label = self.table.item(row, 1).text() if self.table.item(row, 1) else ""
+            addr_text = self.table.item(row, 2).text() if self.table.item(row, 2) else "0"
+            type_w = self.table.cellWidget(row, 3)
+            reg_type = type_w.currentText() if type_w else "holding"
+            dtype_w = self.table.cellWidget(row, 4)
+            data_type = dtype_w.currentText() if dtype_w else "uint16"
+            try:
+                slave_id = int(sid_text)
+            except ValueError:
+                slave_id = 0
             try:
                 address = int(addr_text)
             except ValueError:
                 address = -1
-            points.append(RegisterPoint(label=label, address=address))
+            points.append(RegisterPoint(
+                label=label, address=address, slave_id=slave_id,
+                register_type=reg_type, data_type=data_type,
+            ))
         return points
 
     def load_points(self, points):
         self.table.setRowCount(0)
         for p in points:
-            self._add_row(p.label, p.address)
+            self._add_row(p.slave_id, p.label, p.address,
+                          p.register_type, p.data_type)
         self._update_point_count()
 
     def _current_config(self):
         config = self.mw.devicePage.apply_to_config(DeviceConfig())
         self.mw.mqttPage.apply_to_config(config)
         config.points = self.table_to_points()
-        sizing_warnings = config.assign_types_from_sizing()
-        if sizing_warnings:
-            self.mw.log("Modbus Map Sizing:\n" + "\n".join(sizing_warnings), "warn")
         return config
 
     def _validate(self):
@@ -1055,18 +995,17 @@ class DataTransmissionPage(QWidget):
         config.save_full_config_csv(csv_path)
         config.save_full_config_json(json_path)
 
-        breakdown = config.sizing_summary()
         self.mw.log(
             f"Full config exported as both CSV and JSON:\n"
             f"  {csv_path}\n  {json_path}\n"
-            f"Includes Wi-Fi, Device Settings, Modbus Map Sizing ({breakdown}), "
-            f"and {len(config.points)} register(s) — first rows as integers, "
-            f"following rows as decimals/double-integers per the sizing order.",
+            f"Includes Wi-Fi, Device Settings, and {len(config.points)} "
+            f"register(s) with per-register slave_id/type/data_type.",
             "success"
         )
         QMessageBox.information(
             self, "Export Complete",
-            f"Saved:\n{csv_path}\n{json_path}\n\n{breakdown}"
+            f"Saved:\n{csv_path}\n{json_path}\n\n"
+            f"{len(config.points)} registers exported."
         )
 
     def _current_conn_mode(self):
@@ -1239,14 +1178,16 @@ class StatusPage(QWidget):
     def set_config_summary(self, config):
         wifi_line = (f"Wi-Fi SSID: <b>{config.wifi_ssid}</b>" if config.wifi_ssid
                      else "Wi-Fi: not set (USB dongle / Ethernet)")
-        device_line = (f"Device: <b>{config.device_id}</b> &nbsp;|&nbsp; Slave ID: {config.slave_id} "
-                       f"&nbsp;|&nbsp; Baud: {config.baud} &nbsp;|&nbsp; Parity: {config.parity} "
-                       f"&nbsp;|&nbsp; Stop Bits: {config.stop_bits} &nbsp;|&nbsp; Poll: {config.interval_sec}s")
-        sizing_line = f"Modbus Map Sizing — {config.sizing_summary()}"
+        device_line = (f"Device: <b>{config.device_id}</b> &nbsp;|&nbsp; "
+                       f"Default Slave ID: {config.slave_id} "
+                       f"&nbsp;|&nbsp; Baud: {config.baud} &nbsp;|&nbsp; "
+                       f"Parity: {config.parity} "
+                       f"&nbsp;|&nbsp; Stop Bits: {config.stop_bits} "
+                       f"&nbsp;|&nbsp; Poll: {config.interval_sec}s")
         reg_line = f"Registers configured: <b>{len(config.points)}</b>"
         self.summary_label.setTextFormat(Qt.RichText)
         self.summary_label.setText(
-            wifi_line + "<br>" + device_line + "<br>" + sizing_line + "<br>" + reg_line
+            wifi_line + "<br>" + device_line + "<br>" + reg_line
         )
 
     def _paint_status(self, state):

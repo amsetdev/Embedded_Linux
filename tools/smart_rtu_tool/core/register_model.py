@@ -3,18 +3,14 @@ register_model.py
 ------------------
 Defines the RegisterPoint data model and the DeviceConfig container that
 holds everything the tool needs about one device: Wi-Fi, device/Modbus
-settings, Modbus Map Sizing, and the register list.
+settings, and the register list with per-register slave_id, type, and
+data_type for multi-slave support.
 
-Everything is delivered to the board as ONE combined file (not three
-separate files) — Wi-Fi + Device Settings + Modbus Map Sizing +
-Registers all together, in both a .csv and a .json version of the same
-content, both written to /home/root/edb_c/linking/ as:
+Everything is delivered to the board as ONE combined file in both a
+.csv and a .json version, written to /home/root/edb_c/linking/ as:
 
     smart_rtu_config.csv
     smart_rtu_config.json
-
-See FIRMWARE_NOTES.md for what the board-side code needs to read this
-combined file instead of the old three separate files.
 """
 
 from __future__ import annotations
@@ -26,17 +22,17 @@ from typing import List, Optional
 
 
 VALID_REG_TYPES = {"holding", "input", "coil", "discrete"}
-VALID_DATA_TYPES = {"word", "int32", "float32"}  # word = single 16-bit register
+VALID_DATA_TYPES = {"uint16", "int32", "float32"}
 
 
 @dataclass
 class RegisterPoint:
     label: str
     address: int
+    slave_id: int = 0                  # 0 = use device default slave_id
     register_type: str = "holding"     # holding | input | coil | discrete
-    data_type: str = "word"            # word | int32 | float32 (see note below)
+    data_type: str = "uint16"          # uint16 | int32 | float32
     unit: str = ""
-    scale: float = 1.0
 
     def validate(self) -> Optional[str]:
         """Returns an error string if invalid, else None."""
@@ -44,6 +40,8 @@ class RegisterPoint:
             return "Label cannot be empty"
         if self.address < 0 or self.address > 65535:
             return f"Address {self.address} out of range (0-65535)"
+        if self.slave_id < 0 or self.slave_id > 247:
+            return f"Slave ID {self.slave_id} out of range (0-247)"
         if self.register_type not in VALID_REG_TYPES:
             return f"Invalid register_type '{self.register_type}'"
         if self.data_type not in VALID_DATA_TYPES:
@@ -58,6 +56,8 @@ class DeviceConfig:
     slave_id: int = 1
     baud: int = 9600
     interval_sec: int = 30
+    parity: str = "None"
+    stop_bits: int = 1
     points: List[RegisterPoint] = field(default_factory=list)
 
     # ---- Wi-Fi (board's own network, if applicable) -------------------
@@ -79,69 +79,21 @@ class DeviceConfig:
     mqtt_private_key: str = "/home/root/edb_c/linking/private.key"
     mqtt_topic: str = ""
 
-    # ---- Modbus map sizing (counts only; actual points still come from
-    # the Data Transmission table / Excel import) ---------------------
-    coils: int = 0
-    alerts: int = 0
-    holding_integers: int = 0
-    holding_decimals: int = 0
-    holding_double_integers: int = 0
-    input_integers: int = 0
-    input_decimals: int = 0
-    input_double_integers: int = 0
-    parity: str = "None"
-    stop_bits: int = 1
-
-    # ---- Auto-assign register_type/data_type from Device Config sizing
-    # -------------------------------------------------------------------
-    # Register Type / Data Type / Unit / Scale are no longer entered per
-    # row in the Data Transmission table. Instead, the counts set on the
-    # Device Config page (Holding Integers/Decimals/Double Integers,
-    # Input Integers/Decimals/Double Integers) determine how the points
-    # — taken in table order — are typed. Example: Holding Integers=6,
-    # Holding Decimals=4, with 10 rows in the table -> first 6 rows are
-    # holding/word, next 4 are holding/float32.
-    def assign_types_from_sizing(self) -> List[str]:
-        """Mutates self.points' register_type/data_type in place based on
-        the sizing counts above. Returns a list of warning strings (empty
-        if the point count matches the configured sizing exactly)."""
-        plan = [
-            ("holding", "word", self.holding_integers),
-            ("holding", "float32", self.holding_decimals),
-            ("holding", "int32", self.holding_double_integers),
-            ("input", "word", self.input_integers),
-            ("input", "float32", self.input_decimals),
-            ("input", "int32", self.input_double_integers),
-        ]
-        idx = 0
-        for reg_type, data_type, count in plan:
-            for _ in range(count):
-                if idx >= len(self.points):
-                    break
-                self.points[idx].register_type = reg_type
-                self.points[idx].data_type = data_type
-                idx += 1
-
-        warnings = []
-        total_sized = sum(c for _, _, c in plan)
-        if idx < len(self.points):
-            leftover = len(self.points) - idx
-            warnings.append(
-                f"{leftover} row(s) exceed the configured Modbus Map Sizing "
-                f"({total_sized} total) — left as holding/word. Increase the "
-                f"counts on Device Config if these are intentional."
-            )
-        elif total_sized > len(self.points):
-            warnings.append(
-                f"Modbus Map Sizing expects {total_sized} point(s) but the "
-                f"table only has {len(self.points)} — add more rows or "
-                f"reduce the counts on Device Config."
-            )
-        return warnings
-
-    # ---- Combined config file (Wi-Fi + Device + Modbus Map Sizing +
-    # Registers, ALL IN ONE FILE) -------------------------------------
+    # ---- Combined config file (Wi-Fi + Device + Registers,
+    # ALL IN ONE FILE) ------------------------------------------------
     def to_full_config_dict(self) -> dict:
+        regs = []
+        for p in self.points:
+            r = {
+                "label": p.label,
+                "address": p.address,
+                "type": p.register_type,
+                "data_type": p.data_type,
+            }
+            if p.slave_id > 0:
+                r["slave_id"] = p.slave_id
+            regs.append(r)
+
         return {
             "device": {
                 "device_id": self.device_id,
@@ -170,45 +122,8 @@ class DeviceConfig:
                 "private_key": self.mqtt_private_key,
                 "topic": self.mqtt_topic,
             },
-            "modbus_sizing": {
-                "coils": self.coils,
-                "alerts": self.alerts,
-                "holding_integers": self.holding_integers,
-                "holding_decimals": self.holding_decimals,
-                "holding_double_integers": self.holding_double_integers,
-                "input_integers": self.input_integers,
-                "input_decimals": self.input_decimals,
-                "input_double_integers": self.input_double_integers,
-            },
-            # Just label + address, same as the Excel sheet. Which bucket
-            # (integer/decimal/double, holding/input) each row falls into
-            # is worked out from position + the modbus_sizing counts
-            # above — call assign_types_from_sizing() if you need that
-            # per-row detail elsewhere in the tool.
-            "registers": [{"label": p.label, "address": p.address} for p in self.points],
+            "registers": regs,
         }
-
-    def sizing_summary(self) -> str:
-        """One-line human summary of the Modbus Map Sizing counts, used on
-        the Status page recap and in log messages."""
-        parts = []
-        if self.holding_integers or self.holding_decimals or self.holding_double_integers:
-            parts.append(
-                f"Holding: {self.holding_integers} int, "
-                f"{self.holding_decimals} decimal, "
-                f"{self.holding_double_integers} double-int"
-            )
-        if self.input_integers or self.input_decimals or self.input_double_integers:
-            parts.append(
-                f"Input: {self.input_integers} int, "
-                f"{self.input_decimals} decimal, "
-                f"{self.input_double_integers} double-int"
-            )
-        if self.coils:
-            parts.append(f"Coils: {self.coils}")
-        if self.alerts:
-            parts.append(f"Alerts: {self.alerts}")
-        return "; ".join(parts) if parts else "No Modbus Map Sizing configured"
 
     # ---- The ONE combined settings+registers file sent to/read from the
     # device (used by Read/Send/Erase on the Device Config page, AND by
@@ -223,11 +138,10 @@ class DeviceConfig:
 
     def to_full_config_csv_string(self) -> str:
         """
-        ONE CSV containing everything: Wi-Fi, Device Settings, Modbus
-        Map Sizing, and the register list (label, address — same as
-        the Excel format). Sections are marked with [SECTION] header
-        rows so it stays a single plain CSV file, readable in Excel or
-        a text editor. This is the same file sent to the device.
+        ONE CSV containing everything: Wi-Fi, Device Settings, and the
+        register list with per-register type info. Sections are marked
+        with [SECTION] header rows. This is the same file sent to the
+        device.
         """
         d = self.to_full_config_dict()
         buf = io.StringIO()
@@ -253,15 +167,16 @@ class DeviceConfig:
             writer.writerow([k, v])
         writer.writerow([])
 
-        writer.writerow(["[MODBUS_SIZING]"])
-        for k, v in d["modbus_sizing"].items():
-            writer.writerow([k, v])
-        writer.writerow([])
-
         writer.writerow(["[REGISTERS]"])
-        writer.writerow(["label", "address"])
+        writer.writerow(["slave_id", "label", "address", "type", "data_type"])
         for r in d["registers"]:
-            writer.writerow([r["label"], r["address"]])
+            writer.writerow([
+                r.get("slave_id", 0),
+                r["label"],
+                r["address"],
+                r["type"],
+                r["data_type"],
+            ])
 
         return buf.getvalue()
 
@@ -320,11 +235,12 @@ class DeviceConfig:
             err = p.validate()
             if err:
                 errors.append(f"Row {i+1} ({p.label or '?'}): {err}")
-            key = (p.register_type, p.address)
+            key = (p.slave_id, p.register_type, p.address)
             if key in seen_addr:
                 errors.append(
                     f"Row {i+1}: duplicate address {p.address} "
-                    f"({p.register_type}) also used in row {seen_addr[key]+1}"
+                    f"(slave {p.slave_id}, {p.register_type}) "
+                    f"also used in row {seen_addr[key]+1}"
                 )
             else:
                 seen_addr[key] = i

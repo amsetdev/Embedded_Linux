@@ -16,7 +16,6 @@ BUILD_DIR := build
 TARGET  := $(BUILD_DIR)/main
 
 SRCS    := $(SRC_DIR)/main.c                    \
-           $(SRC_DIR)/fieldbus/modbus.c          \
            $(SRC_DIR)/fieldbus/fieldbus_rtu.c    \
            $(SRC_DIR)/fieldbus/fieldbus_tcp.c    \
            $(SRC_DIR)/fieldbus/data.c            \
@@ -28,9 +27,11 @@ SRCS    := $(SRC_DIR)/main.c                    \
            $(SRC_DIR)/system/connection.c        \
            $(SRC_DIR)/system/wifi.c              \
            $(SRC_DIR)/system/rtc.c               \
+           $(SRC_DIR)/system/watchdog.c          \
            $(SRC_DIR)/ui/display.c               \
            $(SRC_DIR)/util/json.c                \
            $(SRC_DIR)/util/settings.c            \
+           $(SRC_DIR)/util/msg_queue.c           \
            $(SRC_DIR)/util/drive_logger.c
 
 OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
@@ -58,7 +59,7 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
 
 # --- Board Deploy ---
 BOARD_USER := root
-BOARD_IP   := 192.168.137.209
+BOARD_IP   := 192.168.1.24
 BOARD_DIR  := /home/root/edb_c/linking/
 BOARD_LIB_DIR := /usr/lib
 
@@ -101,7 +102,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 collect-libs:
 	mkdir -p $(LIB_DIR)
 	@echo "  Resolving full dependency tree…"
-	./scripts/collect-libs.sh $(TARGET) $(LIB_DIR)
+	bash ./scripts/collect-libs.sh $(TARGET) $(LIB_DIR)
 	@echo "  Libraries collected in $(LIB_DIR)/"
 
 ## Remove all build artifacts

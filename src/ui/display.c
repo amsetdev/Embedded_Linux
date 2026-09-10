@@ -1,3 +1,11 @@
+/**
+ * @file display.c
+ * @brief DRM framebuffer display and touch input implementation.
+ *
+ * Implements 480x800 DRM-based display rendering with a 5x7 pixel
+ * font, touch input via evdev, and two application screens (status
+ * and settings).
+ */
 
 #include "display.h"
 #include "settings.h"
@@ -120,6 +128,15 @@ static int touch_y     = -1;
 static int touch_down  = 0;
 static int touch_tapped = 0;
 
+/**
+ * @brief Initializes the DRM display subsystem.
+ *
+ * Opens the DRM device node, verifies dumb-buffer support, enumerates
+ * connectors and encoders to find a connected display, creates a
+ * dumb framebuffer, maps it into userspace, and sets the CRTC mode.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int drm_init(void)
 {
     drm_fd = open(DRM_DEVICE, O_RDWR | O_CLOEXEC);
@@ -194,6 +211,12 @@ int drm_init(void)
     return 0;
 }
 
+/**
+ * @brief Flushes the internal RGB565 framebuffer to the DRM display.
+ *
+ * Converts each pixel from the 16-bit RGB565 software framebuffer to
+ * 32-bit XRGB8888 and writes it into the memory-mapped DRM dumb buffer.
+ */
 void drm_flush(void)
 {
     if (!drm_map) return;
@@ -207,6 +230,11 @@ void drm_flush(void)
         }
 }
 
+/**
+ * @brief Releases DRM display resources.
+ *
+ * Unmaps the framebuffer memory and closes the DRM device file descriptor.
+ */
 void drm_cleanup(void)
 {
     if (drm_map) { munmap(drm_map, drm_size); drm_map = NULL; }
@@ -216,6 +244,16 @@ void drm_cleanup(void)
 /* ============================================================================
  * TOUCH
  * ========================================================================== */
+
+/**
+ * @brief Initializes the touch input device.
+ *
+ * Scans /dev/input/event0 through event3 for a device that supports
+ * absolute X-axis events (EV_ABS / ABS_X), opens it in non-blocking
+ * mode, and stores the file descriptor for subsequent polling.
+ *
+ * @return 0 on success, -1 if no touch device is found.
+ */
 int touch_init(void)
 {
     const char *devs[] = { "/dev/input/event0","/dev/input/event1",
@@ -232,6 +270,13 @@ int touch_init(void)
     return -1;
 }
 
+/**
+ * @brief Polls the touch device for new input events.
+ *
+ * Reads all pending evdev events from the touch file descriptor.
+ * Updates the current touch coordinates (ABS_X, ABS_Y) and tracks
+ * touch-down / touch-up transitions to detect single taps.
+ */
 void touch_poll(void)
 {
     if (touch_fd < 0) return;
@@ -246,6 +291,15 @@ void touch_poll(void)
     if (!prev && touch_down) touch_tapped = 1;
 }
 
+/**
+ * @brief Tests whether the last tap fell inside a rectangle.
+ *
+ * @param x Left edge of the rectangle in pixels.
+ * @param y Top edge of the rectangle in pixels.
+ * @param w Width of the rectangle in pixels.
+ * @param h Height of the rectangle in pixels.
+ * @return 1 if a tap occurred inside the rectangle, 0 otherwise.
+ */
 int touch_in_rect(int x, int y, int w, int h)
 {
     return touch_tapped
@@ -256,24 +310,81 @@ int touch_in_rect(int x, int y, int w, int h)
 /* ============================================================================
  * FRAMEBUFFER DRAWING HELPERS
  * ========================================================================== */
+
+/**
+ * @brief Sets a single pixel in the software framebuffer.
+ *
+ * Performs bounds checking before writing. Out-of-bounds coordinates
+ * are silently ignored.
+ *
+ * @param x Pixel X coordinate.
+ * @param y Pixel Y coordinate.
+ * @param c RGB565 color value.
+ */
 static inline void fb_pixel(int x, int y, uint16_t c)
 { if (x>=0 && x<DISP_W && y>=0 && y<DISP_H) fb[y][x] = c; }
 
+/**
+ * @brief Fills the entire software framebuffer with a single color.
+ *
+ * @param c RGB565 color value.
+ */
 void fb_fill(uint16_t c)
 { for (int y=0;y<DISP_H;y++) for (int x=0;x<DISP_W;x++) fb[y][x]=c; }
 
+/**
+ * @brief Draws a filled rectangle in the software framebuffer.
+ *
+ * @param x Left edge X coordinate.
+ * @param y Top edge Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param c RGB565 fill color.
+ */
 void fb_rect(int x, int y, int w, int h, uint16_t c)
 { for (int dy=0;dy<h;dy++) for (int dx=0;dx<w;dx++) fb_pixel(x+dx,y+dy,c); }
 
+/**
+ * @brief Draws a horizontal line in the software framebuffer.
+ *
+ * @param x Starting X coordinate.
+ * @param y Y coordinate.
+ * @param len Length of the line in pixels.
+ * @param c RGB565 color value.
+ */
 void fb_hline(int x, int y, int len, uint16_t c)
 { for (int i=0;i<len;i++) fb_pixel(x+i,y,c); }
 
+/**
+ * @brief Draws a one-pixel-wide rectangular border.
+ *
+ * @param x Left edge X coordinate.
+ * @param y Top edge Y coordinate.
+ * @param w Width in pixels.
+ * @param h Height in pixels.
+ * @param c RGB565 border color.
+ */
 void fb_border(int x, int y, int w, int h, uint16_t c)
 {
     fb_hline(x,y,w,c); fb_hline(x,y+h-1,w,c);
     for (int i=0;i<h;i++) { fb_pixel(x,y+i,c); fb_pixel(x+w-1,y+i,c); }
 }
 
+/**
+ * @brief Renders a single character using the built-in 5x7 bitmap font.
+ *
+ * Characters outside the printable ASCII range (0x20--0x7E) are
+ * replaced with '?'. The character is drawn at the given scale factor,
+ * where each font pixel becomes an (s x s) block.
+ *
+ * @param x Left X coordinate.
+ * @param y Top Y coordinate.
+ * @param c ASCII character to render.
+ * @param fg Foreground (glyph) color in RGB565.
+ * @param bg Background color in RGB565.
+ * @param s  Scale factor (1 = native 5x7 size).
+ * @return X coordinate immediately after the rendered character.
+ */
 int fb_char(int x, int y, char c, uint16_t fg, uint16_t bg, int s)
 {
     if (c < 0x20 || c > 0x7E) c = '?';
@@ -286,15 +397,59 @@ int fb_char(int x, int y, char c, uint16_t fg, uint16_t bg, int s)
     return x + (5+1)*s;
 }
 
+/**
+ * @brief Renders a null-terminated string using the built-in 5x7 font.
+ *
+ * @param x  Starting X coordinate.
+ * @param y  Y coordinate.
+ * @param s  Null-terminated string to render.
+ * @param fg Foreground color in RGB565.
+ * @param bg Background color in RGB565.
+ * @param sc Scale factor.
+ * @return X coordinate immediately after the last rendered character.
+ */
 int fb_str(int x, int y, const char *s, uint16_t fg, uint16_t bg, int sc)
 { while (*s) x = fb_char(x,y,*s++,fg,bg,sc); return x; }
 
+/**
+ * @brief Computes the rendered pixel width of a string.
+ *
+ * Each character occupies 6 scaled pixels (5 glyph columns + 1 spacing).
+ *
+ * @param s  Null-terminated string.
+ * @param sc Scale factor.
+ * @return Total width in pixels.
+ */
 int fb_strw(const char *s, int sc)
 { return (int)strlen(s) * 6 * sc; }
 
+/**
+ * @brief Renders a string horizontally centered on the display.
+ *
+ * @param y  Y coordinate.
+ * @param s  Null-terminated string.
+ * @param fg Foreground color in RGB565.
+ * @param bg Background color in RGB565.
+ * @param sc Scale factor.
+ */
 void fb_str_c(int y, const char *s, uint16_t fg, uint16_t bg, int sc)
 { fb_str((DISP_W - fb_strw(s,sc))/2, y, s, fg, bg, sc); }
 
+/**
+ * @brief Draws a labeled button and checks for a tap inside it.
+ *
+ * Renders a filled rectangle with a border and centered label text,
+ * then returns whether the user tapped within the button area.
+ *
+ * @param x   Left edge X coordinate.
+ * @param y   Top edge Y coordinate.
+ * @param w   Button width in pixels.
+ * @param h   Button height in pixels.
+ * @param lbl Null-terminated button label string.
+ * @param bg  Button background color in RGB565.
+ * @param fg  Label and border color in RGB565.
+ * @return 1 if the button was tapped, 0 otherwise.
+ */
 int ui_button(int x, int y, int w, int h, const char *lbl,
               uint16_t bg, uint16_t fg)
 {
@@ -307,6 +462,22 @@ int ui_button(int x, int y, int w, int h, const char *lbl,
 /* ============================================================================
  * STATUS SCREEN
  * ========================================================================== */
+
+/**
+ * @brief Renders the system status screen.
+ *
+ * Draws the header, current time, Modbus and MQTT connection indicators,
+ * configuration summary, a success-rate progress bar, and a scrollable
+ * list of live register values. A "SETTINGS" button at the bottom
+ * switches to SCREEN_SETTINGS when tapped. Calls drm_flush() to push
+ * the completed frame to the display.
+ *
+ * @param cycle   Current Modbus polling cycle number.
+ * @param mb_ok   Modbus connection status (non-zero = connected).
+ * @param mq_ok   MQTT connection status (non-zero = online).
+ * @param success Number of registers read successfully this cycle.
+ * @param total   Total number of configured register points.
+ */
 void disp_status(int cycle, int mb_ok, int mq_ok, int success, int total)
 {
     if (!disp_ok) return;
@@ -372,6 +543,16 @@ void disp_status(int cycle, int mb_ok, int mq_ok, int success, int total)
 /* ============================================================================
  * SETTINGS SCREEN
  * ========================================================================== */
+
+/**
+ * @brief Renders the settings screen with adjustable parameters.
+ *
+ * Displays numeric settings (polling interval, Modbus baud rate,
+ * Modbus slave ID, MQTT port) with increment/decrement buttons, a
+ * read-only summary of the current MQTT and Modbus configuration, and
+ * SAVE / BACK navigation buttons. Calls drm_flush() to push the
+ * completed frame to the display.
+ */
 void disp_settings(void)
 {
     if (!disp_ok) return;

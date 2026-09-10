@@ -110,6 +110,16 @@ extern "C" {
 #define APP_BINARY_PATH_DEF    "/home/root/edb_c/linking/main"
 
 /* -------------------------------------------------------------------------- */
+/* Default Watchdog Configuration                                             */
+/* -------------------------------------------------------------------------- */
+
+/** @brief Default watchdog enable state (disabled). */
+#define WATCHDOG_ENABLE_DEF    0
+
+/** @brief Default thread staleness timeout in seconds. */
+#define WATCHDOG_TIMEOUT_DEF   60
+
+/* -------------------------------------------------------------------------- */
 /* Default Polling Configuration                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -244,6 +254,14 @@ typedef struct
 
     /** @brief Path to the application binary on the board. */
     char app_binary_path[256];
+
+    /* Watchdog */
+
+    /** @brief Watchdog enable flag. */
+    int watchdog_enable;
+
+    /** @brief Thread staleness timeout in seconds. */
+    int watchdog_timeout;
 
 } AppSettings;
 

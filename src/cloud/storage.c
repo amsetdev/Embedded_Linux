@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <stdatomic.h>
 
 #define STORAGE_DIR          "/home/root/edb_c/linking/storage"
 #define MAX_PATH             256
@@ -37,7 +38,7 @@
 static pthread_t replay_thread;
 
 /** @brief Indicates whether the replay thread is running. */
-static volatile int replay_running = 0;
+static atomic_int replay_running = 0;
 
 /**
  * @brief Initializes offline storage.
@@ -120,11 +121,11 @@ static void *replay_worker(void *arg)
 {
     (void)arg;
 
-    while (replay_running)
+    while (atomic_load(&replay_running))
     {
         sleep(REPLAY_INTERVAL_SEC);
 
-        if (!mqtt_connected || !internet_up)
+        if (!atomic_load(&mqtt_connected) || !atomic_load(&internet_up))
         {
             printf("[SD_CARD] Not connected - replay skipped\n");
             continue;
@@ -244,10 +245,10 @@ static void *replay_worker(void *arg)
  */
 void offline_replay_start(void)
 {
-    if (replay_running)
+    if (atomic_load(&replay_running))
         return;
 
-    replay_running = 1;
+    atomic_store(&replay_running, 1);
 
     if (pthread_create(&replay_thread,
                        NULL,
@@ -258,7 +259,7 @@ void offline_replay_start(void)
                 "[SD_CARD] pthread_create: %s\n",
                 strerror(errno));
 
-        replay_running = 0;
+        atomic_store(&replay_running, 0);
     }
 }
 
@@ -270,10 +271,10 @@ void offline_replay_start(void)
  */
 void offline_cleanup(void)
 {
-    if (!replay_running)
+    if (!atomic_load(&replay_running))
         return;
 
-    replay_running = 0;
+    atomic_store(&replay_running, 0);
 
     pthread_join(replay_thread, NULL);
 

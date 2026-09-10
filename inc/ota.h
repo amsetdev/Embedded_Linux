@@ -90,6 +90,13 @@ void ota_on_message(struct mosquitto *m,
                     const struct mosquitto_message *msg);
 
 /**
+ * @brief Sets the watchdog heartbeat ID for the OTA thread.
+ *
+ * @param id  Watchdog ID from watchdog_register().
+ */
+void ota_set_wdg_id(int id);
+
+/**
  * @brief Cleans up the OTA subsystem.
  *
  * Signals the OTA thread to exit and releases resources.

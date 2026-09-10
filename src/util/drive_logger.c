@@ -1,3 +1,12 @@
+/**
+ * @file drive_logger.c
+ * @brief Google Drive log upload implementation.
+ *
+ * Captures application error and warning messages from stderr,
+ * buffers them in memory, and periodically uploads batches to
+ * a Google Apps Script endpoint via HTTP POST.
+ */
+
 #define _GNU_SOURCE
 #include "drive_logger.h"
 
@@ -68,6 +77,15 @@ static volatile uint32_t s_total_warnings  = 0;
 static volatile uint32_t s_total_uploaded  = 0;
 static volatile uint32_t s_upload_failures = 0;
 
+/**
+ * @brief Gets a formatted timestamp string.
+ *
+ * Writes the current local time into the provided buffer using
+ * the format "YYYY-MM-DD HH:MM:SS".
+ *
+ * @param buf  Output buffer to receive the formatted timestamp.
+ * @param len  Size of the output buffer in bytes.
+ */
 static void get_timestamp(char *buf, size_t len)
 {
     time_t t = time(NULL);
@@ -76,6 +94,15 @@ static void get_timestamp(char *buf, size_t len)
     strftime(buf, len, "%Y-%m-%d %H:%M:%S", &tm_info);
 }
 
+/**
+ * @brief Gets a compact timestamp string suitable for filenames.
+ *
+ * Writes the current local time into the provided buffer using
+ * the format "YYYYMMDD_HHMMSS" (no spaces or colons).
+ *
+ * @param buf  Output buffer to receive the compact timestamp.
+ * @param len  Size of the output buffer in bytes.
+ */
 static void get_timestamp_compact(char *buf, size_t len)
 {
     time_t t = time(NULL);
@@ -84,6 +111,17 @@ static void get_timestamp_compact(char *buf, size_t len)
     strftime(buf, len, "%Y%m%d_%H%M%S", &tm_info);
 }
 
+/**
+ * @brief Strips ANSI escape sequences from a string.
+ *
+ * Copies the input string to the output buffer while removing
+ * any ANSI escape sequences (e.g., color codes). The output
+ * is always null-terminated.
+ *
+ * @param in        Input string potentially containing ANSI sequences.
+ * @param out       Output buffer for the cleaned string.
+ * @param out_size  Size of the output buffer in bytes.
+ */
 static void strip_ansi(const char *in, char *out, size_t out_size)
 {
     size_t oi = 0, ii = 0;
@@ -98,7 +136,15 @@ static void strip_ansi(const char *in, char *out, size_t out_size)
     out[oi] = '\0';
 }
 
-/* Returns 1=ERROR, 2=WARNING, 0=neither */
+/**
+ * @brief Classifies a log line as error, warning, or normal.
+ *
+ * Inspects the line content for known error and warning prefixes,
+ * including ANSI-colored variants.
+ *
+ * @param line  The log line to classify.
+ * @return 1 if the line is an error, 2 if a warning, 0 otherwise.
+ */
 static int classify_line(const char *line)
 {
     if (!line || strlen(line) < 3) return 0;
@@ -119,6 +165,20 @@ static int classify_line(const char *line)
     return 0;
 }
 
+/**
+ * @brief Parses a raw log line into tag, message, and error flag.
+ *
+ * Strips ANSI escape sequences from the raw input, then extracts
+ * the tag (module name) and message body. The error flag is set
+ * based on line classification.
+ *
+ * @param raw           Raw log line, potentially with ANSI codes.
+ * @param tag_out       Output buffer for the extracted tag string.
+ * @param tag_size      Size of the tag output buffer in bytes.
+ * @param msg_out       Pointer set to the start of the message body
+ *                      within an internal static buffer.
+ * @param is_error_out  Set to true if the line is an error, false otherwise.
+ */
 static void parse_line(const char *raw,
                         char *tag_out, size_t tag_size,
                         const char **msg_out,
@@ -151,6 +211,14 @@ static void parse_line(const char *raw,
         *msg_out = (*(colon + 1) == ' ') ? colon + 2 : colon + 1;
 }
 
+/**
+ * @brief Initializes the log queue.
+ *
+ * Zeroes the queue structure and initializes its mutex and
+ * condition variable.
+ *
+ * @param q  Pointer to the log queue to initialize.
+ */
 static void queue_init(log_queue_t *q)
 {
     memset(q, 0, sizeof(*q));
@@ -158,6 +226,17 @@ static void queue_init(log_queue_t *q)
     pthread_cond_init(&q->not_empty, NULL);
 }
 
+/**
+ * @brief Pushes a log item onto the queue.
+ *
+ * Copies the item into the queue's ring buffer and signals
+ * the condition variable. If the queue is full the item is
+ * dropped.
+ *
+ * @param q     Pointer to the log queue.
+ * @param item  Pointer to the log item to enqueue.
+ * @return true if the item was enqueued, false if the queue was full.
+ */
 static bool queue_push(log_queue_t *q, const log_item_t *item)
 {
     pthread_mutex_lock(&q->lock);
@@ -173,6 +252,17 @@ static bool queue_push(log_queue_t *q, const log_item_t *item)
     return true;
 }
 
+/**
+ * @brief Pops a log item from the queue with a timeout.
+ *
+ * Blocks until an item is available or the timeout expires.
+ * On success the item is copied to the caller's buffer.
+ *
+ * @param q           Pointer to the log queue.
+ * @param item        Output buffer for the dequeued log item.
+ * @param timeout_ms  Maximum time to wait in milliseconds.
+ * @return true if an item was dequeued, false on timeout.
+ */
 static bool queue_pop(log_queue_t *q, log_item_t *item, int timeout_ms)
 {
     struct timespec ts;
@@ -196,12 +286,29 @@ static bool queue_pop(log_queue_t *q, log_item_t *item, int timeout_ms)
     return true;
 }
 
+/**
+ * @brief Destroys the log queue.
+ *
+ * Releases the mutex and condition variable resources
+ * associated with the queue.
+ *
+ * @param q  Pointer to the log queue to destroy.
+ */
 static void queue_destroy(log_queue_t *q)
 {
     pthread_mutex_destroy(&q->lock);
     pthread_cond_destroy(&q->not_empty);
 }
 
+/**
+ * @brief Initializes the log buffer.
+ *
+ * Allocates the initial buffer memory, writes the log file
+ * header, and sets the buffer to collecting state.
+ *
+ * @param b  Pointer to the log buffer to initialize.
+ * @return true on success, false if memory allocation fails.
+ */
 static bool buf_init(log_buffer_t *b)
 {
     memset(b, 0, sizeof(*b));
@@ -227,6 +334,20 @@ static bool buf_init(log_buffer_t *b)
     return true;
 }
 
+/**
+ * @brief Adds a log entry to the buffer.
+ *
+ * Appends a formatted log line to the buffer, growing it if
+ * necessary. Stops collecting once the target log count is
+ * reached.
+ *
+ * @param b         Pointer to the log buffer.
+ * @param tag       Module or subsystem tag for the log entry.
+ * @param message   The log message text.
+ * @param is_error  true if the entry is an error, false for a warning.
+ * @return true if the entry was added, false if the buffer is full,
+ *         an upload is in progress, or memory allocation fails.
+ */
 static bool buf_add(log_buffer_t *b, const char *tag,
                     const char *message, bool is_error)
 {
@@ -282,6 +403,16 @@ static bool buf_add(log_buffer_t *b, const char *tag,
     return (written > 0);
 }
 
+/**
+ * @brief Checks if the buffer is ready for upload.
+ *
+ * The buffer is considered ready when the target log count has
+ * been reached or when the inactivity timeout has elapsed since
+ * the last log entry.
+ *
+ * @param b  Pointer to the log buffer.
+ * @return true if the buffer should be uploaded, false otherwise.
+ */
 static bool buf_ready(log_buffer_t *b)
 {
     pthread_mutex_lock(&b->lock);
@@ -303,6 +434,19 @@ static bool buf_ready(log_buffer_t *b)
     return ready;
 }
 
+/**
+ * @brief Prepares the buffer content for upload.
+ *
+ * Copies the current buffer contents into a newly allocated
+ * string and marks the buffer as upload-in-progress.
+ *
+ * @param b          Pointer to the log buffer.
+ * @param out        Receives a pointer to a malloc'd copy of the buffer
+ *                   content. The caller must free this memory.
+ * @param count_out  Receives the number of log entries in the copy.
+ * @return true if the upload copy was prepared, false if the buffer
+ *         is empty, already uploading, or memory allocation fails.
+ */
 static bool buf_begin_upload(log_buffer_t *b, char **out, int *count_out)
 {
     pthread_mutex_lock(&b->lock);
@@ -328,6 +472,14 @@ static bool buf_begin_upload(log_buffer_t *b, char **out, int *count_out)
     return true;
 }
 
+/**
+ * @brief Marks the current upload as successful.
+ *
+ * Clears the upload-in-progress flag and sets the upload-successful
+ * flag so the buffer can be reset for the next batch.
+ *
+ * @param b  Pointer to the log buffer.
+ */
 static void buf_upload_ok(log_buffer_t *b)
 {
     pthread_mutex_lock(&b->lock);
@@ -336,6 +488,14 @@ static void buf_upload_ok(log_buffer_t *b)
     pthread_mutex_unlock(&b->lock);
 }
 
+/**
+ * @brief Marks the current upload as failed.
+ *
+ * Clears the upload-in-progress flag while leaving the buffer
+ * content intact so the upload can be retried.
+ *
+ * @param b  Pointer to the log buffer.
+ */
 static void buf_upload_fail(log_buffer_t *b)
 {
     pthread_mutex_lock(&b->lock);
@@ -344,6 +504,14 @@ static void buf_upload_fail(log_buffer_t *b)
     pthread_mutex_unlock(&b->lock);
 }
 
+/**
+ * @brief Resets the buffer for the next batch.
+ *
+ * Clears all buffer content and state, writes a new batch header,
+ * and resumes log collection.
+ *
+ * @param b  Pointer to the log buffer to reset.
+ */
 static void buf_reset(log_buffer_t *b)
 {
     pthread_mutex_lock(&b->lock);
@@ -370,6 +538,14 @@ static void buf_reset(log_buffer_t *b)
     pthread_mutex_unlock(&b->lock);
 }
 
+/**
+ * @brief Destroys the log buffer.
+ *
+ * Frees the dynamically allocated buffer memory and destroys
+ * the associated mutex.
+ *
+ * @param b  Pointer to the log buffer to destroy.
+ */
 static void buf_destroy(log_buffer_t *b)
 {
     pthread_mutex_lock(&b->lock);
@@ -379,6 +555,16 @@ static void buf_destroy(log_buffer_t *b)
     pthread_mutex_destroy(&b->lock);
 }
 
+/**
+ * @brief URL-encodes a string.
+ *
+ * Allocates and returns a new string where unsafe characters are
+ * percent-encoded. Spaces are encoded as '+'. The caller must
+ * free the returned string.
+ *
+ * @param str  The input string to encode.
+ * @return A newly allocated URL-encoded string, or NULL on failure.
+ */
 static char *url_encode(const char *str)
 {
     if (!str) return NULL;
@@ -407,12 +593,37 @@ static char *url_encode(const char *str)
 /* -----------------------------------------------------------------------
  * HTTP upload
  * --------------------------------------------------------------------- */
+
+/**
+ * @brief libcurl write callback that discards response data.
+ *
+ * Used as the CURLOPT_WRITEFUNCTION to suppress output from
+ * HTTP responses.
+ *
+ * @param ptr   Pointer to the received data.
+ * @param sz    Size of each data element.
+ * @param nmemb Number of data elements.
+ * @param ud    User data pointer (unused).
+ * @return The total number of bytes handled (sz * nmemb).
+ */
 static size_t discard_response(void *ptr, size_t sz, size_t nmemb, void *ud)
 {
     (void)ptr; (void)ud;
     return sz * nmemb;
 }
 
+/**
+ * @brief Uploads log content via HTTP POST.
+ *
+ * URL-encodes the log content and filename, constructs a
+ * form-encoded POST body, and sends it to the configured
+ * Google Apps Script endpoint using libcurl. Retries up to
+ * DRIVE_LOGGER_MAX_RETRIES times on failure.
+ *
+ * @param content  The log text to upload.
+ * @param count    Number of log entries contained in the content.
+ * @return true if the upload succeeded (HTTP 2xx/3xx), false otherwise.
+ */
 static bool http_upload(const char *content, int count)
 {
     if (!content || count == 0) return false;
@@ -490,6 +701,16 @@ static bool http_upload(const char *content, int count)
     return success;
 }
 
+/**
+ * @brief Reader thread that captures stderr output.
+ *
+ * Reads characters from the intercepted stderr pipe one byte at
+ * a time, echoes them to the real stderr, and enqueues complete
+ * lines classified as errors or warnings into the log queue.
+ *
+ * @param arg  Thread argument (unused).
+ * @return Always returns NULL.
+ */
 static void *reader_thread_fn(void *arg)
 {
     (void)arg;
@@ -531,6 +752,17 @@ static void *reader_thread_fn(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Upload thread that processes and uploads log batches.
+ *
+ * Continuously dequeues log items, parses them, and adds them to
+ * the buffer. When the buffer is ready (target count reached or
+ * inactivity timeout), prepares and uploads the batch via HTTP.
+ * Resets the buffer on success or retries on failure.
+ *
+ * @param arg  Thread argument (unused).
+ * @return Always returns NULL.
+ */
 static void *upload_thread_fn(void *arg)
 {
     (void)arg;
@@ -579,6 +811,15 @@ static void *upload_thread_fn(void *arg)
     return NULL;
 }
 
+/**
+ * @brief Starts the drive logger service.
+ *
+ * Saves the real stderr, creates a pipe to intercept stderr output,
+ * initializes libcurl, the log queue, and the log buffer, then
+ * spawns the reader and upload background threads.
+ *
+ * @return true if the logger started successfully, false on failure.
+ */
 bool drive_logger_start(void)
 {
     if (s_logger_active) {
@@ -633,6 +874,12 @@ bool drive_logger_start(void)
     return true;
 }
 
+/**
+ * @brief Stops the drive logger service.
+ *
+ * Signals the background threads to exit, joins them, destroys
+ * the queue and buffer resources, and cleans up libcurl.
+ */
 void drive_logger_stop(void)
 {
     if (!s_logger_active) return;
@@ -640,7 +887,7 @@ void drive_logger_stop(void)
 
     s_logger_active = false;
     s_task_running  = false;
-    pthread_cond_signal(&s_queue.not_empty); 
+    pthread_cond_signal(&s_queue.not_empty);
 
     pthread_join(s_reader_thread, NULL);
     pthread_join(s_upload_thread, NULL);
@@ -654,6 +901,19 @@ void drive_logger_stop(void)
          s_total_captured, s_total_uploaded, s_upload_failures);
 }
 
+/**
+ * @brief Writes a formatted log message.
+ *
+ * Formats the message with the given level prefix and tag, then
+ * writes it to stderr where it will be intercepted by the reader
+ * thread for buffering and upload.
+ *
+ * @param level  Log severity level (DRIVE_LOG_ERROR, DRIVE_LOG_WARNING,
+ *               or DRIVE_LOG_INFO).
+ * @param tag    Module or subsystem name.
+ * @param fmt    printf-style format string.
+ * @param ...    Format arguments.
+ */
 void drive_logger_write(int level, const char *tag, const char *fmt, ...)
 {
     const char *prefix = (level == DRIVE_LOG_ERROR)  ? "E" :
@@ -664,11 +924,20 @@ void drive_logger_write(int level, const char *tag, const char *fmt, ...)
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
-   
+
     fprintf(stderr, "%s (%s) %s: %s\n", prefix, tag, tag, msg);
     fflush(stderr);
 }
 
+/**
+ * @brief Retrieves current logger statistics.
+ *
+ * Copies the current values of all internal counters into the
+ * provided statistics structure.
+ *
+ * @param stats  Pointer to a drive_logger_stats_t structure to populate.
+ *               If NULL, no action is taken.
+ */
 void drive_logger_get_stats(drive_logger_stats_t *stats)
 {
     if (!stats) return;
@@ -679,6 +948,11 @@ void drive_logger_get_stats(drive_logger_stats_t *stats)
     stats->upload_failures = s_upload_failures;
 }
 
+/**
+ * @brief Checks if the drive logger is currently running.
+ *
+ * @return true if the logger is active, false otherwise.
+ */
 bool drive_logger_is_running(void)
 {
     return s_logger_active;

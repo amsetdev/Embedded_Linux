@@ -66,6 +66,11 @@ void settings_defaults(void)
     strcpy(cfg.wifi_password, WIFI_PASSWORD_DEF);
     strcpy(cfg.wifi_country, WIFI_COUNTRY_DEF);
 
+    /* Watchdog */
+
+    cfg.watchdog_enable = WATCHDOG_ENABLE_DEF;
+    cfg.watchdog_timeout = WATCHDOG_TIMEOUT_DEF;
+
     /* OTA */
 
     cfg.ota_enable = OTA_ENABLE_DEF;
@@ -284,6 +289,23 @@ int settings_load(void)
                         sizeof(cfg.app_binary_path));
     }
 
+    /*------------------------------------------------------*/
+    /* Watchdog                                              */
+    /*------------------------------------------------------*/
+
+    char *wdg = strstr(json, "\"watchdog\"");
+
+    if (wdg)
+    {
+        json_get_int(wdg,
+                     "enable",
+                     &cfg.watchdog_enable);
+
+        json_get_int(wdg,
+                     "timeout",
+                     &cfg.watchdog_timeout);
+    }
+
     free(json);
 
     printf("\n========== Settings Loaded ==========\n");
@@ -319,6 +341,9 @@ int settings_load(void)
     printf("OTA Dir        : %s\n", cfg.ota_download_dir);
     printf("App Version    : %s\n", cfg.app_version);
     printf("App Binary     : %s\n", cfg.app_binary_path);
+
+    printf("WDG Enable     : %d\n", cfg.watchdog_enable);
+    printf("WDG Timeout    : %ds\n", cfg.watchdog_timeout);
 
     printf("=====================================\n\n");
 

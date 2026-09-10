@@ -243,6 +243,146 @@ static fieldbus_status_t tcp_read_block(void *vctx,
 }
 
 /**
+ * @brief Write a single register or coil via Modbus TCP.
+ *
+ * @param vctx     Opaque context from tcp_init().
+ * @param reg_type Register type (FB_REG_COIL or FB_REG_HOLDING).
+ * @param addr     Register or coil address.
+ * @param value    Value to write.
+ * @return FIELDBUS_OK on success.
+ */
+static fieldbus_status_t tcp_write_register(void *vctx,
+                                             fb_reg_type_t reg_type,
+                                             uint16_t addr,
+                                             uint16_t value)
+{
+    tcp_ctx_t *ctx = (tcp_ctx_t *)vctx;
+    int rc;
+
+    switch (reg_type)
+    {
+    case FB_REG_COIL:
+        rc = modbus_write_bit(ctx->mb_ctx, addr, value ? 1 : 0);
+        if (rc == 1)
+            return FIELDBUS_OK;
+        break;
+
+    case FB_REG_HOLDING:
+        rc = modbus_write_register(ctx->mb_ctx, addr, value);
+        if (rc == 1)
+            return FIELDBUS_OK;
+        break;
+
+    default:
+        fprintf(stderr,
+                "[FIELDBUS_TCP] Cannot write to %s registers\n",
+                (reg_type == FB_REG_INPUT) ? "input" : "discrete");
+        return FIELDBUS_ERR_IO;
+    }
+
+    fprintf(stderr,
+            "[FIELDBUS_TCP] Write error (addr %d): %s\n",
+            addr,
+            modbus_strerror(errno));
+
+    return FIELDBUS_ERR_IO;
+}
+
+/**
+ * @brief Write a contiguous block of registers or coils via Modbus TCP.
+ *
+ * @param vctx     Opaque context from tcp_init().
+ * @param reg_type Register type (FB_REG_COIL or FB_REG_HOLDING).
+ * @param start    Starting address.
+ * @param count    Number of registers/coils.
+ * @param values   Array of values to write.
+ * @return FIELDBUS_OK on success.
+ */
+static fieldbus_status_t tcp_write_block(void *vctx,
+                                          fb_reg_type_t reg_type,
+                                          uint16_t start,
+                                          int count,
+                                          const uint16_t *values)
+{
+    tcp_ctx_t *ctx = (tcp_ctx_t *)vctx;
+    int rc;
+
+    switch (reg_type)
+    {
+    case FB_REG_HOLDING:
+        rc = modbus_write_registers(ctx->mb_ctx,
+                                    start,
+                                    count,
+                                    values);
+        if (rc == count)
+            return FIELDBUS_OK;
+        break;
+
+    case FB_REG_COIL:
+    {
+        /* libmodbus modbus_write_bits expects uint8_t array. */
+        uint8_t *bits = malloc((size_t)count);
+
+        if (!bits)
+            return FIELDBUS_ERR_IO;
+
+        for (int i = 0; i < count; i++)
+            bits[i] = values[i] ? 1 : 0;
+
+        rc = modbus_write_bits(ctx->mb_ctx, start, count, bits);
+
+        free(bits);
+
+        if (rc == count)
+            return FIELDBUS_OK;
+        break;
+    }
+
+    default:
+        fprintf(stderr,
+                "[FIELDBUS_TCP] Cannot write to %s registers\n",
+                (reg_type == FB_REG_INPUT) ? "input" : "discrete");
+        return FIELDBUS_ERR_IO;
+    }
+
+    fprintf(stderr,
+            "[FIELDBUS_TCP] Block write error (start %d, count %d): %s\n",
+            start,
+            count,
+            modbus_strerror(errno));
+
+    return FIELDBUS_ERR_IO;
+}
+
+/**
+ * @brief Set the slave ID for subsequent TCP operations.
+ *
+ * @param vctx     Opaque context from tcp_init().
+ * @param slave_id Modbus slave address (1-247).
+ * @return FIELDBUS_OK on success, FIELDBUS_ERR_IO on failure.
+ */
+static fieldbus_status_t tcp_set_slave(void *vctx, int slave_id)
+{
+    tcp_ctx_t *ctx = (tcp_ctx_t *)vctx;
+
+    if (slave_id < 1 || slave_id > 247)
+        return FIELDBUS_ERR_IO;
+
+    if (modbus_set_slave(ctx->mb_ctx, slave_id) == -1)
+    {
+        fprintf(stderr,
+                "[FIELDBUS_TCP] Failed to set slave %d: %s\n",
+                slave_id,
+                modbus_strerror(errno));
+        return FIELDBUS_ERR_IO;
+    }
+
+    ctx->slave_id = slave_id;
+
+    return FIELDBUS_OK;
+}
+
+/**
  * @brief Close the Modbus TCP driver.
  *
  * Disconnects from the slave and frees all resources.
@@ -274,11 +414,14 @@ static void tcp_close(void *vctx)
 /* -------------------------------------------------------------------------- */
 
 static const fieldbus_driver_t modbus_tcp_driver = {
-    .name          = "modbus_tcp",
-    .init          = tcp_init,
-    .read_register = tcp_read_register,
-    .read_block    = tcp_read_block,
-    .close         = tcp_close,
+    .name           = "modbus_tcp",
+    .init           = tcp_init,
+    .read_register  = tcp_read_register,
+    .read_block     = tcp_read_block,
+    .write_register = tcp_write_register,
+    .write_block    = tcp_write_block,
+    .set_slave      = tcp_set_slave,
+    .close          = tcp_close,
 };
 
 const fieldbus_driver_t *fieldbus_get_modbus_tcp(void)

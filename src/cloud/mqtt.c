@@ -1,3 +1,13 @@
+/**
+ * @file mqtt.c
+ * @brief MQTT client implementation for AWS IoT Core.
+ *
+ * Handles MQTT client initialization with X.509 mutual TLS,
+ * JSON payload construction from Modbus register data,
+ * message publishing with offline storage fallback,
+ * and broker reconnection logic.
+ */
+
 #include "mqtt.h"
 #include "settings.h"
 #include "data.h"
@@ -9,11 +19,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 #include <mosquitto.h>
 
 /** @brief Indicates whether the MQTT client is currently connected. */
-volatile int mqtt_connected = 0;
+atomic_int mqtt_connected = 0;
 
 /** @brief Mosquitto client instance. */
 static struct mosquitto *mosq = NULL;
@@ -34,7 +45,7 @@ static void on_connect(struct mosquitto *m, void *ud, int rc)
     (void)m;
     (void)ud;
 
-    mqtt_connected = (rc == 0);
+    atomic_store(&mqtt_connected, (rc == 0) ? 1 : 0);
 
     if (rc == 0) {
         printf("[MQTT] Connected to AWS IoT Core\n");
@@ -69,10 +80,13 @@ static void on_disconnect(struct mosquitto *m, void *ud, int rc)
 {
     (void)m;
     (void)ud;
-    (void)rc;
 
-    mqtt_connected = 0;
-    printf("[MQTT] Disconnected\n");
+    atomic_store(&mqtt_connected, 0);
+
+    if (rc == 0)
+        printf("[MQTT] Disconnected (clean)\n");
+    else
+        fprintf(stderr, "[MQTT] Disconnected unexpectedly (rc=%d)\n", rc);
 }
 
 /**
@@ -96,7 +110,7 @@ struct mosquitto *mqtt_get_mosq(void)
  */
 int mqtt_publish_to(const char *topic, const char *payload, int qos)
 {
-    if (!mosq || !mqtt_connected || !topic || !payload)
+    if (!mosq || !atomic_load(&mqtt_connected) || !topic || !payload)
         return 0;
 
     int rc = mosquitto_publish(mosq,
@@ -177,6 +191,9 @@ int mqtt_init(void)
     /* AWS IoT Core requires TLS 1.2 minimum */
 
     mosquitto_tls_opts_set(mosq, 1, "tlsv1.2", NULL);
+
+    /* Exponential backoff: 5s initial, max 60s, no jitter. */
+    mosquitto_reconnect_delay_set(mosq, 5, 60, false);
 
     mosquitto_connect_callback_set(mosq, on_connect);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
@@ -285,7 +302,7 @@ void build_payload(char *buf, size_t buflen)
  */
 void mqtt_publish(const char *payload)
 {
-    if (mqtt_connected && internet_up) {
+    if (atomic_load(&mqtt_connected) && atomic_load(&internet_up)) {
 
         if (mosquitto_publish(mosq,
                               NULL,

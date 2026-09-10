@@ -1,4 +1,5 @@
 #include "mb_tcp.h"
+#include "watchdog.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include <modbus/modbus.h>
 #include <sqlite3.h>
@@ -239,6 +241,8 @@ void *mb_thread_func1(void *arg)
     ctx.slave_port = args->slave_port;
     ctx.slave_id   = args->slave_id;
 
+    int wdg_id = args->wdg_id;
+
     /*
      * Use default Modbus TCP port if none was supplied.
      */
@@ -303,7 +307,7 @@ void *mb_thread_func1(void *arg)
     /*
      * Main polling loop.
      */
-    extern volatile int running;
+    extern atomic_int running;
 
     while (running)
     {
@@ -359,6 +363,11 @@ void *mb_thread_func1(void *arg)
             continue;
         }
 
+
+        /*
+         * Report watchdog heartbeat.
+         */
+        watchdog_heartbeat(wdg_id);
 
         /*
          * Wait until next Modbus TCP polling cycle.

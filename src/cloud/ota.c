@@ -12,11 +12,13 @@
 #include "mqtt.h"
 #include "https.h"
 #include "json.h"
+#include "watchdog.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <time.h>
 #include <errno.h>
@@ -29,7 +31,10 @@
 /* External state                                                             */
 /* -------------------------------------------------------------------------- */
 
-extern volatile int running;
+extern atomic_int running;
+
+/** @brief Watchdog heartbeat ID for the OTA thread (-1 if disabled). */
+static int ota_wdg_id = -1;
 
 /* -------------------------------------------------------------------------- */
 /* Internal state                                                             */
@@ -376,6 +381,8 @@ void *ota_thread_func(void *arg)
 
     while (running)
     {
+        watchdog_heartbeat(ota_wdg_id);
+
         pthread_mutex_lock(&ota_mutex);
 
         /* Wait for a request or timeout every 2 seconds. */
@@ -518,6 +525,21 @@ void ota_on_message(struct mosquitto *m,
  * @brief Initializes the OTA subsystem.
  *
  * Creates the download directory.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+/**
+ * @brief Sets the watchdog heartbeat ID for the OTA thread.
+ *
+ * @param id  Watchdog ID from watchdog_register().
+ */
+void ota_set_wdg_id(int id)
+{
+    ota_wdg_id = id;
+}
+
+/**
+ * @brief Initializes the OTA subsystem.
  *
  * @return 1 on success, 0 on failure.
  */

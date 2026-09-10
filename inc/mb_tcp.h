@@ -81,6 +81,11 @@ typedef struct
      */
     int slave_id;
 
+    /**
+     * @brief Watchdog heartbeat ID (-1 if watchdog disabled).
+     */
+    int wdg_id;
+
 } mb_thread_arg_t;
 
 /* -------------------------------------------------------------------------- */

@@ -19,6 +19,7 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <stdatomic.h>
 #include <mosquitto.h>
 
 /* -------------------------------------------------------------------------- */
@@ -40,7 +41,7 @@ extern "C" {
  * - 1 = Connected to the MQTT broker.
  * - 0 = Disconnected.
  */
-extern volatile int mqtt_connected;
+extern atomic_int mqtt_connected;
 
 /* -------------------------------------------------------------------------- */
 /* API                                                                        */

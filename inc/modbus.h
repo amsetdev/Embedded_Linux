@@ -52,7 +52,7 @@ typedef enum
 /**
  * @brief Guard time after transmission before returning to receive mode.
  */
-#define RS485_TX_GUARD_US 1100
+#define RS485_TX_GUARD_US 3500
 
 /**
  * @brief Maximum time to wait for a slave response (milliseconds).
@@ -201,6 +201,45 @@ int mb_transaction(uint8_t slave,
                    uint8_t fc,
                    uint16_t addr,
                    uint16_t *value);
+
+/**
+ * @brief Executes a Modbus RTU write-single transaction.
+ *
+ * Builds and sends a Modbus write request for FC05 (Write Single Coil)
+ * or FC06 (Write Single Register). The slave echoes the request frame
+ * on success.
+ *
+ * @param slave Modbus slave address.
+ * @param fc    Function code (0x05 or 0x06).
+ * @param addr  Register or coil address.
+ * @param value Value to write (0xFF00/0x0000 for coils, raw for registers).
+ *
+ * @return 1 on success, 0 on failure.
+ */
+int mb_write_single(uint8_t slave,
+                    uint8_t fc,
+                    uint16_t addr,
+                    uint16_t value);
+
+/**
+ * @brief Executes a Modbus RTU write-multiple transaction.
+ *
+ * Builds and sends a Modbus write request for FC15 (Write Multiple Coils)
+ * or FC16 (Write Multiple Registers).
+ *
+ * @param slave  Modbus slave address.
+ * @param fc     Function code (0x0F or 0x10).
+ * @param addr   Starting address.
+ * @param count  Number of registers or coils to write.
+ * @param values Array of values to write.
+ *
+ * @return 1 on success, 0 on failure.
+ */
+int mb_write_multiple(uint8_t slave,
+                      uint8_t fc,
+                      uint16_t addr,
+                      uint16_t count,
+                      const uint16_t *values);
 
 #ifdef __cplusplus
 }

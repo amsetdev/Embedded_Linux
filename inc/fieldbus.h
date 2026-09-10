@@ -151,6 +151,55 @@ typedef struct fieldbus_driver
                                     uint16_t *values);
 
     /**
+     * @brief Write a single register or coil.
+     *
+     * Uses FC05 (Write Single Coil) for coils and FC06 (Write Single
+     * Register) for holding registers. Writing to input registers or
+     * discrete inputs returns FIELDBUS_ERR_IO.
+     *
+     * @param ctx      Opaque context from init().
+     * @param reg_type Register type.
+     * @param addr     Register or coil address.
+     * @param value    Value to write.
+     * @return FIELDBUS_OK on success.
+     */
+    fieldbus_status_t (*write_register)(void *ctx,
+                                        fb_reg_type_t reg_type,
+                                        uint16_t addr,
+                                        uint16_t value);
+
+    /**
+     * @brief Write a contiguous block of registers or coils.
+     *
+     * Uses FC15 (Write Multiple Coils) for coils and FC16 (Write
+     * Multiple Registers) for holding registers.
+     *
+     * @param ctx      Opaque context from init().
+     * @param reg_type Register type.
+     * @param start    Starting address.
+     * @param count    Number of registers/coils to write.
+     * @param values   Array of values to write.
+     * @return FIELDBUS_OK on success.
+     */
+    fieldbus_status_t (*write_block)(void *ctx,
+                                     fb_reg_type_t reg_type,
+                                     uint16_t start,
+                                     int count,
+                                     const uint16_t *values);
+
+    /**
+     * @brief Set the slave ID for subsequent operations.
+     *
+     * For multi-slave support, call this before read/write
+     * to target a specific slave device on the bus.
+     *
+     * @param ctx      Opaque context from init().
+     * @param slave_id Modbus slave address (1-247).
+     * @return FIELDBUS_OK on success.
+     */
+    fieldbus_status_t (*set_slave)(void *ctx, int slave_id);
+
+    /**
      * @brief Close the driver and free resources.
      *
      * @param ctx Opaque context from init().

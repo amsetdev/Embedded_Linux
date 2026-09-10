@@ -1,10 +1,10 @@
 #!/bin/bash
-# collect-libs.sh — Recursively resolves all shared library dependencies
+# collect-libs.sh - Recursively resolves all shared library dependencies
 # for an ARM binary and copies them into a deploy directory.
 #
 # Usage: ./scripts/collect-libs.sh <elf-binary> <output-dir>
 #
-# Skips libc, ld-linux, libpthread, libm, libdl, librt — these are part
+# Skips libc, ld-linux, libpthread, libm, libdl, librt - these are part
 # of the base system and are always present on the board.
 
 set -e
@@ -14,7 +14,7 @@ OUTDIR="$2"
 READELF="arm-linux-gnueabihf-readelf"
 SEARCH_DIRS="/usr/lib/arm-linux-gnueabihf /lib/arm-linux-gnueabihf"
 
-# System libs that are always on the board — never deploy these
+# System libs that are always on the board - never deploy these
 SKIP_PATTERN="^(libc\.so|ld-linux|libpthread|libm\.so|libdl\.so|librt\.so)"
 
 declare -A SEEN  # tracks already-processed sonames
@@ -61,6 +61,6 @@ collect() {
 }
 
 mkdir -p "$OUTDIR"
-echo "  Scanning $BINARY …"
+echo "  Scanning $BINARY ..."
 collect "$BINARY"
 echo "  Total: ${#SEEN[@]} libraries collected"

@@ -11,6 +11,8 @@
 #ifndef CONNECTION_H
 #define CONNECTION_H
 
+#include <stdatomic.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -22,7 +24,7 @@ extern "C" {
  * - 1 : Internet connection is available.
  * - 0 : Internet connection is unavailable.
  */
-extern volatile int internet_up;
+extern atomic_int internet_up;
 
 /**
  * @brief Starts the internet connectivity monitoring thread.

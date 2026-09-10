@@ -12,10 +12,10 @@ same philosophy as the firmware's own parse_csv() header matching:
 
     label / name / point / tag        -> label            (required)
     address / addr / reg / register   -> address           (required)
+    slave_id / slave / slaveid        -> slave_id          (optional, default 0)
     type / register_type / reg_type   -> register_type      (optional, default "holding")
     unit / units                      -> unit               (optional)
-    data_type / datatype / dtype      -> data_type          (optional, default "word")
-    scale / multiplier / factor       -> scale              (optional, default 1.0)
+    data_type / datatype / dtype      -> data_type          (optional, default "uint16")
 
 Only 'label' and 'address' are required columns — everything else has
 a safe default so a minimal two-column spreadsheet (Label, Address)
@@ -39,6 +39,9 @@ _HEADER_ALIASES = {
     "address": "address", "addr": "address", "reg": "address",
     "register": "address", "register address": "address",
 
+    "slave id": "slave_id", "slave_id": "slave_id",
+    "slaveid": "slave_id", "slave": "slave_id",
+
     "type": "register_type", "register type": "register_type",
     "register_type": "register_type", "reg type": "register_type",
     "reg_type": "register_type",
@@ -47,8 +50,6 @@ _HEADER_ALIASES = {
 
     "data type": "data_type", "data_type": "data_type",
     "datatype": "data_type", "dtype": "data_type",
-
-    "scale": "scale", "multiplier": "scale", "factor": "scale",
 }
 
 
@@ -112,6 +113,25 @@ def import_excel(filepath: str, sheet_name=0) -> Tuple[List[RegisterPoint], List
             )
             continue
 
+        slave_id = 0
+        if "slave_id" in colmap:
+            raw = row.get(colmap["slave_id"])
+            if not pd.isna(raw) and str(raw).strip():
+                try:
+                    sid = int(float(str(raw).strip()))
+                    if 0 <= sid <= 247:
+                        slave_id = sid
+                    else:
+                        warnings.append(
+                            f"Row {excel_row_num} ({label}): slave_id {sid} "
+                            f"out of range (0-247), defaulted to 0"
+                        )
+                except ValueError:
+                    warnings.append(
+                        f"Row {excel_row_num} ({label}): slave_id '{raw}' "
+                        f"is not a number, defaulted to 0"
+                    )
+
         register_type = "holding"
         if "register_type" in colmap:
             raw = row.get(colmap["register_type"])
@@ -133,7 +153,7 @@ def import_excel(filepath: str, sheet_name=0) -> Tuple[List[RegisterPoint], List
                         f"register type '{raw}', defaulted to 'holding'"
                     )
 
-        data_type = "word"
+        data_type = "uint16"
         if "data_type" in colmap:
             raw = row.get(colmap["data_type"])
             if not pd.isna(raw) and str(raw).strip():
@@ -144,10 +164,12 @@ def import_excel(filepath: str, sheet_name=0) -> Tuple[List[RegisterPoint], List
                     data_type = "float32"
                 elif "int" in dt or "32" in dt:
                     data_type = "int32"
+                elif dt in ("word", "uint16", "u16"):
+                    data_type = "uint16"
                 else:
                     warnings.append(
                         f"Row {excel_row_num} ({label}): unrecognized "
-                        f"data type '{raw}', defaulted to 'word'"
+                        f"data type '{raw}', defaulted to 'uint16'"
                     )
 
         unit = ""
@@ -156,21 +178,9 @@ def import_excel(filepath: str, sheet_name=0) -> Tuple[List[RegisterPoint], List
             if not pd.isna(raw):
                 unit = str(raw).strip()
 
-        scale = 1.0
-        if "scale" in colmap:
-            raw = row.get(colmap["scale"])
-            if not pd.isna(raw) and str(raw).strip():
-                try:
-                    scale = float(raw)
-                except ValueError:
-                    warnings.append(
-                        f"Row {excel_row_num} ({label}): scale '{raw}' is not "
-                        f"a number, defaulted to 1.0"
-                    )
-
         points.append(RegisterPoint(
-            label=label, address=address, register_type=register_type,
-            data_type=data_type, unit=unit, scale=scale,
+            label=label, address=address, slave_id=slave_id,
+            register_type=register_type, data_type=data_type, unit=unit,
         ))
 
     return points, warnings

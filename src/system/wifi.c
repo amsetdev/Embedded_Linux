@@ -132,6 +132,13 @@ static int get_interface_ip(const char *interface,
 /* Wi-Fi status                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Check whether the Wi-Fi interface is associated with an AP.
+ *
+ * Runs `iw dev` to query the link status of the Wi-Fi interface.
+ *
+ * @return 1 if connected, 0 otherwise.
+ */
 int wifi_is_connected(void)
 {
     FILE *fp;
@@ -158,11 +165,24 @@ int wifi_is_connected(void)
     return 0;
 }
 
+/**
+ * @brief Get the IPv4 address of the Wi-Fi interface.
+ *
+ * @param ip  Output buffer for the IP address string.
+ * @param len Size of the output buffer.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int wifi_get_ip(char *ip, size_t len)
 {
     return get_interface_ip(WIFI_INTERFACE, ip, len);
 }
 
+/**
+ * @brief Check whether the Wi-Fi interface has an IP address.
+ *
+ * @return 1 if an IP is assigned, 0 otherwise.
+ */
 int wifi_has_ip(void)
 {
     char ip[32];
@@ -170,6 +190,11 @@ int wifi_has_ip(void)
     return wifi_get_ip(ip, sizeof(ip)) == 0;
 }
 
+/**
+ * @brief Check whether Wi-Fi is fully online (associated and has IP).
+ *
+ * @return 1 if online, 0 otherwise.
+ */
 int wifi_is_online(void)
 {
     if (!wifi_is_connected())
@@ -185,6 +210,13 @@ int wifi_is_online(void)
 /* Ethernet status                                                            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Check whether the Ethernet interface has a carrier signal.
+ *
+ * Reads the sysfs carrier file for the Ethernet interface.
+ *
+ * @return 1 if carrier is detected, 0 otherwise.
+ */
 int ethernet_is_connected(void)
 {
     FILE *fp;
@@ -205,11 +237,24 @@ int ethernet_is_connected(void)
     return carrier == 1;
 }
 
+/**
+ * @brief Get the IPv4 address of the Ethernet interface.
+ *
+ * @param ip  Output buffer for the IP address string.
+ * @param len Size of the output buffer.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int ethernet_get_ip(char *ip, size_t len)
 {
     return get_interface_ip(ETH_INTERFACE, ip, len);
 }
 
+/**
+ * @brief Check whether the Ethernet interface has an IP address.
+ *
+ * @return 1 if an IP is assigned, 0 otherwise.
+ */
 int ethernet_has_ip(void)
 {
     char ip[32];
@@ -217,6 +262,11 @@ int ethernet_has_ip(void)
     return ethernet_get_ip(ip, sizeof(ip)) == 0;
 }
 
+/**
+ * @brief Check whether Ethernet is fully online (carrier and IP).
+ *
+ * @return 1 if online, 0 otherwise.
+ */
 int ethernet_is_online(void)
 {
     if (!ethernet_is_connected())
@@ -232,6 +282,13 @@ int ethernet_is_online(void)
 /* General network status                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Check whether any network interface is online.
+ *
+ * Returns true if either Ethernet or Wi-Fi is fully online.
+ *
+ * @return 1 if at least one interface is online, 0 otherwise.
+ */
 int network_is_online(void)
 {
     /*
@@ -249,6 +306,12 @@ int network_is_online(void)
     return 0;
 }
 
+/**
+ * @brief Print the current status of all network interfaces.
+ *
+ * Outputs Ethernet and Wi-Fi connection state and IP addresses
+ * to stdout.
+ */
 void network_print_status(void)
 {
     char ip[32];
@@ -298,6 +361,14 @@ void network_print_status(void)
 /* Wi-Fi configuration                                                        */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * @brief Apply Wi-Fi settings from the application configuration.
+ *
+ * Writes the SSID and password to the wpa_supplicant configuration
+ * file and triggers a reconfigure via wpa_cli.
+ *
+ * @return 0 on success, -1 on failure.
+ */
 int wifi_reconfigure(void)
 {
     FILE *fp;
@@ -375,6 +446,16 @@ int wifi_reconfigure(void)
 }
 
 
+/**
+ * @brief Block until Wi-Fi connects or a timeout expires.
+ *
+ * Polls the Wi-Fi interface once per second until it is associated
+ * and has an IP address, or the timeout elapses.
+ *
+ * @param timeout_seconds Maximum wait time in seconds.
+ *
+ * @return 0 on successful connection, -1 on timeout.
+ */
 int wifi_wait_for_connection(int timeout_seconds)
 {
     char ip[32];

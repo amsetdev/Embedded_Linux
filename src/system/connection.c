@@ -21,11 +21,11 @@
 #include <pthread.h>
 #include <time.h>
 #include <string.h>
+#include <stdatomic.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include "modbus.h"
 #include "display.h"
 #include "settings.h"
 #include "data.h"
@@ -48,13 +48,13 @@
 #define CHECK_TIMEOUT_S 2
 
 /** @brief Global internet connectivity status (1 = connected, 0 = disconnected). */
-volatile int internet_up = 0;
+atomic_int internet_up = 0;
 
 /** @brief Thread handle for the connectivity monitoring thread. */
 static pthread_t conn_tid;
 
 /** @brief Flag indicating whether the connectivity monitoring thread is running. */
-static volatile int conn_running = 0;
+static atomic_int conn_running = 0;
 
 /** @brief Mutex protecting condition variable operations. */
 static pthread_mutex_t cv_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -113,7 +113,7 @@ static void interruptible_sleep(int seconds)
 
     pthread_mutex_lock(&cv_mutex);
 
-    while (conn_running)
+    while (atomic_load(&conn_running))
     {
         int rc = pthread_cond_timedwait(&cv_stop, &cv_mutex, &deadline);
 
@@ -147,28 +147,21 @@ static void *connection_thread_fn(void *arg)
 
     printf("[ Conn ] Connectivity monitor started.------------------------------------------\n");
 
-    while (conn_running)
+    while (atomic_load(&conn_running))
     {
         int up = check_internet();
+        int prev = atomic_load(&internet_up);
 
-        if (up != internet_up)
+        if (up != prev)
         {
             printf("[Conn] Internet %s\n", up ? "UP" : "DOWN");
-
-            /*
-            if (internet_up)
-            {
-                printf("[ Connection ] reconnect mqtt \n");
-                reconnect_mqtt();
-            }
-            */
         }
 
-        internet_up = up;
+        atomic_store(&internet_up, up);
 
         interruptible_sleep(CHECK_INTERVAL);
 
-        if (internet_up && !mqtt_connected)
+        if (atomic_load(&internet_up) && !atomic_load(&mqtt_connected))
         {
             printf("[ Connection ] reconnect mqtt \n");
             reconnect_mqtt();
@@ -187,15 +180,15 @@ static void *connection_thread_fn(void *arg)
  */
 void connection_init(void)
 {
-    if (conn_running)
+    if (atomic_load(&conn_running))
         return;
 
-    conn_running = 1;
+    atomic_store(&conn_running, 1);
 
     if (pthread_create(&conn_tid, NULL, connection_thread_fn, NULL) != 0)
     {
         perror("[Conn] pthread_create");
-        conn_running = 0;
+        atomic_store(&conn_running, 0);
     }
 }
 
@@ -207,12 +200,12 @@ void connection_init(void)
  */
 void connection_stop(void)
 {
-    if (!conn_running)
+    if (!atomic_load(&conn_running))
         return;
 
     pthread_mutex_lock(&cv_mutex);
 
-    conn_running = 0;
+    atomic_store(&conn_running, 0);
     pthread_cond_signal(&cv_stop);
 
     pthread_mutex_unlock(&cv_mutex);

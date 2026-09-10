@@ -34,8 +34,8 @@
 #include <pthread.h>
 #include <time.h>
 #include <string.h>
+#include <stdatomic.h>
 
-#include "modbus.h"
 #include "fieldbus.h"
 #include "display.h"
 #include "settings.h"
@@ -48,6 +48,8 @@
 #include "rtc.h"
 #include "wifi.h"
 #include "ota.h"
+#include "watchdog.h"
+#include "msg_queue.h"
 
 /* -------------------------------------------------------------------------- */
 /* Global application state                                                   */
@@ -58,7 +60,7 @@
  *
  * Set to zero by SIGINT/SIGTERM to stop all worker threads.
  */
-volatile int running = 1;
+atomic_int running = 1;
 
 /**
  * @brief Configuration reload flag.
@@ -98,9 +100,19 @@ static pthread_t mb_thread_id;
 static pthread_t mb_tcp_thread_id;
 
 /**
+ * @brief Indicates whether the Modbus RTU thread was started.
+ */
+static int mb_rtu_started = 0;
+
+/**
  * @brief Indicates whether the Modbus TCP thread was started.
  */
 static int mb_tcp_started = 0;
+
+/**
+ * @brief Indicates whether the RTC sync thread was started.
+ */
+static int rtc_started = 0;
 
 /**
  * @brief RTC synchronization thread handle.
@@ -116,6 +128,51 @@ static pthread_t ota_thread_id;
  * @brief Indicates whether the OTA thread was started.
  */
 static int ota_started = 0;
+
+/**
+ * @brief Watchdog monitor thread handle.
+ */
+static pthread_t wdg_thread_id;
+
+/**
+ * @brief Indicates whether the watchdog thread was started.
+ */
+static int wdg_started = 0;
+
+/**
+ * @brief Watchdog heartbeat ID for the Modbus RTU thread.
+ */
+static int wdg_id_rtu = -1;
+
+/**
+ * @brief Watchdog heartbeat ID for the RTC sync thread.
+ */
+static int wdg_id_rtc = -1;
+
+/**
+ * @brief Watchdog heartbeat ID for the Modbus TCP thread.
+ */
+static int wdg_id_tcp = -1;
+
+/**
+ * @brief Watchdog heartbeat ID for the OTA thread.
+ */
+static int wdg_id_ota = -1;
+
+/**
+ * @brief Watchdog heartbeat ID for the MQTT publisher thread.
+ */
+static int wdg_id_pub = -1;
+
+/**
+ * @brief MQTT publisher thread handle.
+ */
+static pthread_t pub_thread_id;
+
+/**
+ * @brief Global message queue (RTU producer -> MQTT publisher consumer).
+ */
+static msg_queue_t *publish_queue = NULL;
 
 /* -------------------------------------------------------------------------- */
 /* Signal handling                                                            */
@@ -172,6 +229,8 @@ static void *rtc_sync_thread_func(void *arg)
     (void)arg;
     while (running)
     {
+        watchdog_heartbeat(wdg_id_rtc);
+
         int result = rtc_main();
 
         printf("[RTC] Sync result: %d\n", result);
@@ -202,7 +261,8 @@ static void *rtc_sync_thread_func(void *arg)
  * @brief Modbus RTU polling thread.
  *
  * Reads all registers configured in smart_rtu_config.json,
- * builds the MQTT payload and publishes the collected data.
+ * builds the MQTT payload and enqueues it for the publisher
+ * thread.
  *
  * @param arg Unused.
  *
@@ -241,7 +301,7 @@ static void *mb_thread_func(void *arg)
 
         pthread_mutex_lock(&points_mutex);
 
-        mb_ok_flag = (uart_fd >= 0);
+        mb_ok_flag = 1;
         mb_success_cnt = success_count;
         mb_cycle++;
 
@@ -261,18 +321,16 @@ static void *mb_thread_func(void *arg)
         build_payload(payload, sizeof(payload));
 
         /* -------------------------------------------------------------- */
-        /* Publish MQTT payload                                         */
+        /* Enqueue payload for publisher thread                          */
         /* -------------------------------------------------------------- */
 
-        printf("[MQTT] Publishing payload\n");
-
-        mqtt_publish(payload);
+        msg_queue_push(publish_queue, payload);
 
         /* -------------------------------------------------------------- */
-        /* HTTPS test endpoint                                           */
+        /* Report watchdog heartbeat                                     */
         /* -------------------------------------------------------------- */
 
-        https_post("https://httpbin.org/post", payload);
+        watchdog_heartbeat(wdg_id_rtu);
 
         /* -------------------------------------------------------------- */
         /* Wait for next Modbus RTU cycle                                */
@@ -285,6 +343,59 @@ static void *mb_thread_func(void *arg)
             usleep(100000);
         }
     }
+
+    return NULL;
+}
+
+/* -------------------------------------------------------------------------- */
+/* MQTT publisher thread                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * @brief MQTT publisher thread.
+ *
+ * Consumes messages from the publish queue and sends them via
+ * MQTT and HTTPS. Runs independently from the Modbus polling
+ * thread so network latency does not stall data acquisition.
+ *
+ * @param arg Unused.
+ *
+ * @return Always NULL.
+ */
+static void *mqtt_publisher_thread_func(void *arg)
+{
+    (void)arg;
+
+    printf("[PUB] Publisher thread started\n");
+
+    while (running)
+    {
+        char *payload = msg_queue_pop(publish_queue);
+
+        if (!payload)
+        {
+            /* Queue shut down or empty on exit. */
+            break;
+        }
+
+        /* ---- Publish via MQTT ---- */
+
+        printf("[PUB] Publishing payload\n");
+
+        mqtt_publish(payload);
+
+        /* ---- HTTPS test endpoint ---- */
+
+        https_post("https://httpbin.org/post", payload);
+
+        free(payload);
+
+        /* ---- Report watchdog heartbeat ---- */
+
+        watchdog_heartbeat(wdg_id_pub);
+    }
+
+    printf("[PUB] Publisher thread stopped\n");
 
     return NULL;
 }
@@ -426,11 +537,7 @@ int main(void)
     printf("  Topic    : %s\n",
            cfg.mqtt_topic);
 
-    printf("  RS485 DE : PE10 (gpiochip4 line 10)\n");
-
-    printf("  DE fix   : write() -> tcdrain() -> "
-           "guard(%dus) -> DE LOW -> read()\n",
-           RS485_TX_GUARD_US);
+    printf("  RS485 DE : PE10 (gpiochip4 line 10) via libmodbus custom RTS\n");
 
     printf("  Interval : %ds\n\n",
            cfg.interval);
@@ -449,14 +556,13 @@ int main(void)
     strncpy(rtu_cfg.parity, cfg.modbus_parity, sizeof(rtu_cfg.parity) - 1);
     rtu_cfg.stop_bits = cfg.modbus_stop_bits;
 
-    if (!data_init_driver(fieldbus_get_modbus_rtu(), &rtu_cfg))
+    int rtu_ok = data_init_driver(fieldbus_get_modbus_rtu(), &rtu_cfg);
+
+    if (!rtu_ok)
     {
         fprintf(stderr,
-                "[ERROR] Cannot initialize Modbus RTU driver\n");
-
-        drive_logger_stop();
-
-        return 1;
+                "[WARN] Modbus RTU driver init failed — "
+                "RTU polling disabled\n");
     }
 
     /* ------------------------------------------------------------------ */
@@ -541,10 +647,35 @@ int main(void)
     /* Load Modbus register configuration                                 */
     /* ------------------------------------------------------------------ */
 
-    if (!parse_registers())
+    if (rtu_ok && !parse_registers())
     {
         fprintf(stderr,
-                "[ERROR] Failed to load register configuration\n");
+                "[WARN] No register configuration — "
+                "RTU polling disabled\n");
+        rtu_ok = 0;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Initialize MQTT and HTTP                                          */
+    /* ------------------------------------------------------------------ */
+
+    mqtt_init();
+
+    http_init();
+
+    /* ------------------------------------------------------------------ */
+    /* Create message queue and start publisher thread                    */
+    /* ------------------------------------------------------------------ */
+
+    publish_queue = msg_queue_create(0);
+
+    if (!publish_queue)
+    {
+        fprintf(stderr,
+                "[ERROR] Failed to create message queue\n");
+
+        mqtt_cleanup();
+        http_cleanup();
 
         data_close_driver();
 
@@ -556,13 +687,29 @@ int main(void)
         return 1;
     }
 
-    /* ------------------------------------------------------------------ */
-    /* Initialize MQTT and HTTP                                          */
-    /* ------------------------------------------------------------------ */
+    if (pthread_create(&pub_thread_id,
+                       NULL,
+                       mqtt_publisher_thread_func,
+                       NULL) != 0)
+    {
+        perror("[ERROR] Failed to create publisher thread");
 
-    mqtt_init();
+        msg_queue_destroy(publish_queue);
 
-    http_init();
+        mqtt_cleanup();
+        http_cleanup();
+
+        data_close_driver();
+
+        if (disp_ok)
+            drm_cleanup();
+
+        drive_logger_stop();
+
+        return 1;
+    }
+
+    printf("[PUB] MQTT publisher thread started\n");
 
     /* ------------------------------------------------------------------ */
     /* Start OTA thread (if enabled)                                      */
@@ -592,30 +739,68 @@ int main(void)
     }
 
     /* ------------------------------------------------------------------ */
+    /* Initialize watchdog and register threads (if enabled)             */
+    /* ------------------------------------------------------------------ */
+
+    if (cfg.watchdog_enable)
+    {
+        if (watchdog_init())
+        {
+            wdg_id_rtu = watchdog_register("modbus_rtu");
+            wdg_id_pub = watchdog_register("mqtt_publisher");
+            wdg_id_rtc = watchdog_register("rtc_sync");
+
+            if (cfg.modbus_tcp_enable)
+                wdg_id_tcp = watchdog_register("modbus_tcp");
+
+            if (cfg.ota_enable)
+            {
+                wdg_id_ota = watchdog_register("ota");
+                ota_set_wdg_id(wdg_id_ota);
+            }
+
+            if (pthread_create(&wdg_thread_id,
+                               NULL,
+                               watchdog_thread_func,
+                               NULL) == 0)
+            {
+                wdg_started = 1;
+                printf("[WDG] Monitor thread started\n");
+            }
+            else
+            {
+                perror("[WARN] Failed to create watchdog thread");
+            }
+        }
+    }
+    else
+    {
+        printf("[WDG] Watchdog disabled by configuration\n");
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Start Modbus RTU polling thread                                    */
     /* ------------------------------------------------------------------ */
 
-    if (pthread_create(&mb_thread_id,
-                       NULL,
-                       mb_thread_func,
-                       NULL) != 0)
+    if (rtu_ok)
     {
-        perror("[ERROR] Failed to create Modbus RTU thread");
-
-        mqtt_cleanup();
-        http_cleanup();
-
-        data_close_driver();
-
-        if (disp_ok)
-            drm_cleanup();
-
-        drive_logger_stop();
-
-        return 1;
+        if (pthread_create(&mb_thread_id,
+                           NULL,
+                           mb_thread_func,
+                           NULL) != 0)
+        {
+            perror("[WARN] Failed to create Modbus RTU thread");
+        }
+        else
+        {
+            mb_rtu_started = 1;
+            printf("[MB] Modbus RTU thread started\n");
+        }
     }
-
-    printf("[MB] Modbus RTU thread started\n");
+    else
+    {
+        printf("[MB] Modbus RTU polling skipped (driver/config not available)\n");
+    }
 
     /* ------------------------------------------------------------------ */
     /* Start Modbus TCP polling thread (if enabled)                      */
@@ -632,37 +817,24 @@ int main(void)
 
         mb_arg.slave_port = cfg.modbus_tcp_port;
         mb_arg.slave_id   = cfg.modbus_tcp_slave_id;
+        mb_arg.wdg_id     = wdg_id_tcp;
 
         if (pthread_create(&mb_tcp_thread_id,
                            NULL,
                            mb_thread_func1,
                            &mb_arg) != 0)
         {
-            perror("[ERROR] Failed to create Modbus TCP thread");
-
-            running = 0;
-
-            pthread_join(mb_thread_id, NULL);
-
-            mqtt_cleanup();
-            http_cleanup();
-
-            data_close_driver();
-
-            if (disp_ok)
-                drm_cleanup();
-
-            drive_logger_stop();
-
-            return 1;
+            perror("[WARN] Failed to create Modbus TCP thread");
         }
+        else
+        {
+            mb_tcp_started = 1;
 
-        mb_tcp_started = 1;
-
-        printf("[MB] Modbus TCP thread started (%s:%d slave %d)\n",
-               cfg.modbus_tcp_ip,
-               cfg.modbus_tcp_port,
-               cfg.modbus_tcp_slave_id);
+            printf("[MB] Modbus TCP thread started (%s:%d slave %d)\n",
+                   cfg.modbus_tcp_ip,
+                   cfg.modbus_tcp_port,
+                   cfg.modbus_tcp_slave_id);
+        }
     }
     else
     {
@@ -678,29 +850,13 @@ int main(void)
                        rtc_sync_thread_func,
                        NULL) != 0)
     {
-        perror("[ERROR] Failed to create RTC thread");
-
-        running = 0;
-
-        pthread_join(mb_thread_id, NULL);
-
-        if (mb_tcp_started)
-            pthread_join(mb_tcp_thread_id, NULL);
-
-        mqtt_cleanup();
-        http_cleanup();
-
-        data_close_driver();
-
-        if (disp_ok)
-            drm_cleanup();
-
-        drive_logger_stop();
-
-        return 1;
+        perror("[WARN] Failed to create RTC thread");
     }
-
-    printf("[RTC] Sync thread started\n");
+    else
+    {
+        rtc_started = 1;
+        printf("[RTC] Sync thread started\n");
+    }
 
     /* ------------------------------------------------------------------ */
     /* Offline storage                                                   */
@@ -738,34 +894,37 @@ int main(void)
         }
 
         /* -------------------------------------------------------------- */
-        /* Display update                                                */
+        /* Display update (skip when running headless)                   */
         /* -------------------------------------------------------------- */
 
-        touch_poll();
-
-        if (cur_screen == SCREEN_SETTINGS)
+        if (disp_ok)
         {
-            disp_settings();
-        }
-        else
-        {
-            int cyc;
-            int ok;
-            int succ;
+            touch_poll();
 
-            pthread_mutex_lock(&points_mutex);
+            if (cur_screen == SCREEN_SETTINGS)
+            {
+                disp_settings();
+            }
+            else
+            {
+                int cyc;
+                int ok;
+                int succ;
 
-            cyc = mb_cycle;
-            ok = mb_ok_flag;
-            succ = mb_success_cnt;
+                pthread_mutex_lock(&points_mutex);
 
-            pthread_mutex_unlock(&points_mutex);
+                cyc = mb_cycle;
+                ok = mb_ok_flag;
+                succ = mb_success_cnt;
 
-            disp_status(cyc,
-                        ok,
-                        (int)mqtt_connected,
-                        succ,
-                        data_get_count());
+                pthread_mutex_unlock(&points_mutex);
+
+                disp_status(cyc,
+                            ok,
+                            (int)atomic_load(&mqtt_connected),
+                            succ,
+                            data_get_count());
+            }
         }
 
         /*
@@ -786,18 +945,37 @@ int main(void)
 
     /* Stop worker threads */
 
-    pthread_join(mb_thread_id, NULL);
+    if (mb_rtu_started)
+        pthread_join(mb_thread_id, NULL);
+
+    /* Shut down the publish queue so the publisher thread exits. */
+    msg_queue_shutdown(publish_queue);
+    pthread_join(pub_thread_id, NULL);
 
     if (mb_tcp_started)
         pthread_join(mb_tcp_thread_id, NULL);
 
-    pthread_join(rtc_thread_id, NULL);
+    if (rtc_started)
+        pthread_join(rtc_thread_id, NULL);
 
     if (ota_started)
     {
         ota_cleanup();
         pthread_join(ota_thread_id, NULL);
     }
+
+    if (wdg_started)
+    {
+        pthread_join(wdg_thread_id, NULL);
+        watchdog_cleanup();
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Message queue cleanup                                             */
+    /* ------------------------------------------------------------------ */
+
+    msg_queue_destroy(publish_queue);
+    publish_queue = NULL;
 
     /* ------------------------------------------------------------------ */
     /* Fieldbus driver cleanup                                           */
