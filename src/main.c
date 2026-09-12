@@ -41,6 +41,7 @@
 #include "settings.h"
 #include "data.h"
 #include "mqtt.h"
+#include "connection.h"
 #include "https.h"
 #include "storage.h"
 #include "mb_tcp.h"
@@ -661,6 +662,13 @@ int main(void)
 
     mqtt_init();
 
+    /*
+     * Starts the background thread that maintains internet_up (checked by
+     * mqtt_publish() before every publish) and triggers MQTT reconnection
+     * once connectivity returns.
+     */
+    connection_init();
+
     http_init();
 
     /* ------------------------------------------------------------------ */
@@ -997,6 +1005,12 @@ int main(void)
 
     if (disp_ok)
         drm_cleanup();
+
+    /* ------------------------------------------------------------------ */
+    /* Connectivity monitor cleanup                                       */
+    /* ------------------------------------------------------------------ */
+
+    connection_stop();
 
     /* ------------------------------------------------------------------ */
     /* Offline storage cleanup                                           */
