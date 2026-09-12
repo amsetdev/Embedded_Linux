@@ -427,6 +427,67 @@ int main(void)
            cfg.modbus_port,
            cfg.modbus_baud);
 
+    // /* ------------------------------------------------------------------ */
+    // /* TEMPORARY MODBUS WRITE TEST                                       */
+    // /* ------------------------------------------------------------------ */
+
+    // printf("\n[MB WRITE TEST] Starting...\n");
+
+    // uint8_t test_slave = 1;
+    // uint16_t test_register = 8;
+    // uint16_t test_value = 100;
+
+    // printf("[MB WRITE TEST] Slave=%u Register=%u Value=%u\n",
+    //        test_slave,
+    //        test_register,
+    //        test_value);
+
+    // int write_result =
+    //     mb_write_register(test_slave,
+    //                       test_register,
+    //                       test_value);
+
+    // if (write_result)
+    // {
+    //     printf("[MB WRITE TEST] WRITE SUCCESS\n");
+    // }
+    // else
+    // {
+    //     printf("[MB WRITE TEST] WRITE FAILED\n");
+    // }
+
+    // printf("[MB WRITE TEST] Finished\n\n");
+
+    /* ------------------------------------------------------------------ */
+    /* TEST: Write 8 Holding Registers using Modbus FC10                  */
+    /* ------------------------------------------------------------------ */
+
+    uint16_t test_values[8] =
+        {
+            100,
+            200,
+            300,
+            400,
+            500,
+            600,
+            700,
+            800};
+
+    printf("\n[MB WRITE TEST] Writing 8 registers...\n");
+
+    int write_result = mb_write_registers(1, 0, test_values, 8);
+
+    if (write_result)
+    {
+        printf("[MB WRITE TEST] SUCCESS\n");
+    }
+    else
+    {
+        printf("[MB WRITE TEST] FAILED\n");
+    }
+
+    printf("[MB WRITE TEST] Test finished\n\n");
+
     /* ------------------------------------------------------------------ */
     /* Initialize display                                                */
     /* ------------------------------------------------------------------ */

@@ -604,3 +604,461 @@ int mb_transaction(uint8_t slave,
 
     return 1;
 }
+
+// /**
+//  * @brief Writes one Modbus holding register.
+//  *
+//  * Uses Modbus RTU Function Code 06.
+//  *
+//  * Request:
+//  *   [Slave]
+//  *   [06]
+//  *   [Address Hi]
+//  *   [Address Lo]
+//  *   [Value Hi]
+//  *   [Value Lo]
+//  *   [CRC Lo]
+//  *   [CRC Hi]
+//  *
+//  * Response:
+//  *   Same frame is echoed by the slave.
+//  *
+//  * @return 1 on success, 0 on failure.
+//  */
+// int mb_write_register(uint8_t slave,
+//                       uint16_t addr,
+//                       uint16_t value)
+// {
+//     if (uart_fd < 0)
+//         return 0;
+
+//     uint8_t tx[8];
+//     uint8_t rx[8];
+
+//     int tx_len = 0;
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Build Modbus Function 06 request
+//      * ------------------------------------------------------------
+//      */
+
+//     tx[tx_len++] = slave;
+//     tx[tx_len++] = 0x06;
+
+//     /* Register address */
+//     tx[tx_len++] = (uint8_t)(addr >> 8);
+//     tx[tx_len++] = (uint8_t)(addr & 0xFF);
+
+//     /* Register value */
+//     tx[tx_len++] = (uint8_t)(value >> 8);
+//     tx[tx_len++] = (uint8_t)(value & 0xFF);
+
+//     /* CRC */
+//     uint16_t crc = mb_crc16(tx, tx_len);
+
+//     tx[tx_len++] = (uint8_t)(crc & 0xFF);
+//     tx[tx_len++] = (uint8_t)(crc >> 8);
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Remove stale RX data
+//      * ------------------------------------------------------------
+//      */
+
+//     uart_flush_rx();
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Enable RS-485 transmit mode
+//      * ------------------------------------------------------------
+//      */
+
+//     rs485_tx();
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Send request
+//      * ------------------------------------------------------------
+//      */
+
+//     ssize_t written = write(uart_fd, tx, tx_len);
+
+//     if (written != tx_len)
+//     {
+//         perror("[MB WRITE] write");
+
+//         uart_drain_tx();
+//         rs485_rx();
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Wait until complete frame has physically left UART
+//      * ------------------------------------------------------------
+//      */
+
+//     uart_drain_tx();
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Switch RS-485 back to receive mode
+//      * ------------------------------------------------------------
+//      */
+
+//     rs485_rx();
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Function 06 response is exactly 8 bytes
+//      *
+//      * Slave + FC + Address(2) + Value(2) + CRC(2)
+//      * ------------------------------------------------------------
+//      */
+
+//     int expected = 8;
+
+//     int n = uart_read_timeout(rx,
+//                               expected,
+//                               RX_TIMEOUT_MS);
+
+//     if (n < expected)
+//     {
+//         printf("[MB WRITE] Timeout: received %d/%d bytes\n",
+//                n,
+//                expected);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Check slave address
+//      * ------------------------------------------------------------
+//      */
+
+//     if (rx[0] != slave)
+//     {
+//         printf("[MB WRITE] Invalid slave response: %02X\n",
+//                rx[0]);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Check exception response
+//      *
+//      * For FC 06:
+//      * Exception FC = 0x06 | 0x80 = 0x86
+//      * ------------------------------------------------------------
+//      */
+
+//     if (rx[1] == 0x86)
+//     {
+//         printf("[MB WRITE] Modbus exception: code=%02X\n",
+//                rx[2]);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Check function code
+//      * ------------------------------------------------------------
+//      */
+
+//     if (rx[1] != 0x06)
+//     {
+//         printf("[MB WRITE] Invalid function: expected=06 got=%02X\n",
+//                rx[1]);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Validate echoed address
+//      * ------------------------------------------------------------
+//      */
+
+//     uint16_t response_addr =
+//         ((uint16_t)rx[2] << 8) |
+//         rx[3];
+
+//     if (response_addr != addr)
+//     {
+//         printf("[MB WRITE] Address mismatch: expected=%04X got=%04X\n",
+//                addr,
+//                response_addr);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * Validate echoed value
+//      * ------------------------------------------------------------
+//      */
+
+//     uint16_t response_value =
+//         ((uint16_t)rx[4] << 8) |
+//         rx[5];
+
+//     if (response_value != value)
+//     {
+//         printf("[MB WRITE] Value mismatch: expected=%04X got=%04X\n",
+//                value,
+//                response_value);
+
+//         return 0;
+//     }
+
+//     /*
+//      * ------------------------------------------------------------
+//      * CRC check
+//      * ------------------------------------------------------------
+//      */
+
+//     uint16_t received_crc =
+//         ((uint16_t)rx[7] << 8) |
+//         rx[6];
+
+//     uint16_t calculated_crc =
+//         mb_crc16(rx, 6);
+
+//     if (received_crc != calculated_crc)
+//     {
+//         printf("[MB WRITE] CRC error: received=%04X calculated=%04X\n",
+//                received_crc,
+//                calculated_crc);
+
+//         return 0;
+//     }
+
+//     printf("[MB WRITE] Slave=%u Addr=%u Value=%u SUCCESS\n",
+//            slave,
+//            addr,
+//            value);
+
+//     return 1;
+// }
+
+
+int mb_write_registers(uint8_t slave,
+                       uint16_t start_addr,
+                       const uint16_t *values,
+                       uint16_t quantity)
+{
+    if (uart_fd < 0 || values == NULL || quantity == 0)
+        return 0;
+
+    if (quantity > 123)
+        return 0;
+
+    uint8_t tx[256];
+    uint8_t rx[8];
+
+    int tx_len = 0;
+
+    /* ------------------------------------------------------------ */
+    /* Build FC10 request                                           */
+    /* ------------------------------------------------------------ */
+
+    tx[tx_len++] = slave;
+    tx[tx_len++] = 0x10;
+
+    /* Starting address */
+    tx[tx_len++] = (uint8_t)(start_addr >> 8);
+    tx[tx_len++] = (uint8_t)(start_addr & 0xFF);
+
+    /* Number of registers */
+    tx[tx_len++] = (uint8_t)(quantity >> 8);
+    tx[tx_len++] = (uint8_t)(quantity & 0xFF);
+
+    /* Byte count */
+    tx[tx_len++] = (uint8_t)(quantity * 2);
+
+    /* Register data */
+    for (uint16_t i = 0; i < quantity; i++)
+    {
+        tx[tx_len++] = (uint8_t)(values[i] >> 8);
+        tx[tx_len++] = (uint8_t)(values[i] & 0xFF);
+    }
+
+    /* CRC */
+    uint16_t crc = mb_crc16(tx, tx_len);
+
+    tx[tx_len++] = (uint8_t)(crc & 0xFF);
+    tx[tx_len++] = (uint8_t)(crc >> 8);
+
+    /* ------------------------------------------------------------ */
+    /* Debug TX frame                                               */
+    /* ------------------------------------------------------------ */
+
+    printf("[MB WRITE MULTI TX] ");
+
+    for (int i = 0; i < tx_len; i++)
+        printf("%02X ", tx[i]);
+
+    printf("\n");
+
+    /* ------------------------------------------------------------ */
+    /* Clear old RX data                                            */
+    /* ------------------------------------------------------------ */
+
+    uart_flush_rx();
+
+    /* ------------------------------------------------------------ */
+    /* RS485 TX                                                      */
+    /* ------------------------------------------------------------ */
+
+    rs485_tx();
+
+    ssize_t written = write(uart_fd, tx, tx_len);
+
+    if (written != tx_len)
+    {
+        perror("[MB WRITE MULTI] write");
+
+        uart_drain_tx();
+        rs485_rx();
+
+        return 0;
+    }
+
+    /* Wait for physical transmission to complete */
+    uart_drain_tx();
+
+    /* RS485 RX */
+    rs485_rx();
+
+    /* ------------------------------------------------------------ */
+    /* FC10 response = 8 bytes                                      */
+    /* ------------------------------------------------------------ */
+
+    int expected = 8;
+
+    int n = uart_read_timeout(rx,
+                              expected,
+                              RX_TIMEOUT_MS);
+
+    if (n < expected)
+    {
+        printf("[MB WRITE MULTI] Timeout: received %d/%d bytes\n",
+               n,
+               expected);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* Debug RX frame                                               */
+    /* ------------------------------------------------------------ */
+
+    printf("[MB WRITE MULTI RX] ");
+
+    for (int i = 0; i < n; i++)
+        printf("%02X ", rx[i]);
+
+    printf("\n");
+
+    /* ------------------------------------------------------------ */
+    /* Slave check                                                   */
+    /* ------------------------------------------------------------ */
+
+    if (rx[0] != slave)
+    {
+        printf("[MB WRITE MULTI] Invalid slave: %02X\n",
+               rx[0]);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* Exception response                                           */
+    /* ------------------------------------------------------------ */
+
+    if (rx[1] == 0x90)
+    {
+        printf("[MB WRITE MULTI] Modbus exception: code=%02X\n",
+               rx[2]);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* Function check                                               */
+    /* ------------------------------------------------------------ */
+
+    if (rx[1] != 0x10)
+    {
+        printf("[MB WRITE MULTI] Invalid function: expected=10 got=%02X\n",
+               rx[1]);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* Check starting address                                       */
+    /* ------------------------------------------------------------ */
+
+    uint16_t response_addr =
+        ((uint16_t)rx[2] << 8) |
+        rx[3];
+
+    if (response_addr != start_addr)
+    {
+        printf("[MB WRITE MULTI] Address mismatch: expected=%04X got=%04X\n",
+               start_addr,
+               response_addr);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* Check quantity                                               */
+    /* ------------------------------------------------------------ */
+
+    uint16_t response_quantity =
+        ((uint16_t)rx[4] << 8) |
+        rx[5];
+
+    if (response_quantity != quantity)
+    {
+        printf("[MB WRITE MULTI] Quantity mismatch: expected=%u got=%u\n",
+               quantity,
+               response_quantity);
+
+        return 0;
+    }
+
+    /* ------------------------------------------------------------ */
+    /* CRC check                                                     */
+    /* ------------------------------------------------------------ */
+
+    uint16_t received_crc =
+        ((uint16_t)rx[7] << 8) |
+        rx[6];
+
+    uint16_t calculated_crc =
+        mb_crc16(rx, 6);
+
+    if (received_crc != calculated_crc)
+    {
+        printf("[MB WRITE MULTI] CRC error: received=%04X calculated=%04X\n",
+               received_crc,
+               calculated_crc);
+
+        return 0;
+    }
+
+    printf("[MB WRITE MULTI] Slave=%u Start=%u Quantity=%u SUCCESS\n",
+           slave,
+           start_addr,
+           quantity);
+
+    return 1;
+}

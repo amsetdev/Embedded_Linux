@@ -165,42 +165,49 @@ int uart_read_timeout(uint8_t *buf, int want, int timeout_ms);
 
 /**
  * @brief Calculates the Modbus RTU CRC-16.
- *
- * @param buf Pointer to the data buffer.
- * @param len Number of bytes.
- *
- * @return Computed CRC-16 value.
  */
 uint16_t mb_crc16(const uint8_t *buf, int len);
 
 /**
- * @brief Returns the expected response length for a function code.
- *
- * @param fc Modbus function code.
- *
- * @return Expected response length in bytes.
+ * @brief Returns expected response length for a function code.
  */
 int mb_reply_len(uint8_t fc);
 
 /**
- * @brief Executes a Modbus RTU transaction.
+ * @brief Executes a Modbus RTU read transaction.
  *
- * Builds a Modbus request frame, transmits it over RS-485, waits for
- * the slave response, validates the CRC, and extracts the returned value.
- *
- * @param slave Modbus slave address.
- * @param fc Modbus function code.
- * @param addr Register or coil address.
- * @param value Pointer to store the received value.
- *
- * @return
- * - 1 if the transaction succeeds.
- * - 0 if the transaction fails.
+ * Supported:
+ * 0x01 Read Coils
+ * 0x02 Read Discrete Inputs
+ * 0x03 Read Holding Registers
+ * 0x04 Read Input Registers
  */
 int mb_transaction(uint8_t slave,
                    uint8_t fc,
                    uint16_t addr,
                    uint16_t *value);
+
+/**
+ * @brief Writes one holding register using Function Code 06.
+ *
+ * @param slave Modbus slave address.
+ * @param addr Holding register address.
+ * @param value Value to write.
+ *
+ * @return
+ * - 1 on success.
+ * - 0 on failure.
+ */
+// int mb_write_register(uint8_t slave,
+//                       uint16_t addr,
+//                       uint16_t value);
+
+ 
+//brief Writes multiple holding registers using Function Code 10/16.
+int mb_write_registers(uint8_t slave,
+                       uint16_t start_addr,
+                       const uint16_t *values,
+                       uint16_t quantity);
 
 #ifdef __cplusplus
 }
