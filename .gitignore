@@ -10,7 +10,7 @@
 
 # Packages
 *.deb
-.claude
+.claude 
 
 # Build directories
 build/
@@ -26,4 +26,28 @@ uart7
 
 # Python cache
 __pycache__/
-*.pycd
+*.pyc
+*.pyd
+
+# Python virtual environments
+venv/
+.venv/
+
+# Python / PyInstaller artifacts
+dist/
+*.egg-info/
+
+# Smart RTU Tool build/runtime artifacts
+tools/smart_rtu_tool/venv/
+tools/smart_rtu_tool/dist/
+tools/smart_rtu_tool/build/
+tools/smart_rtu_tool/__pycache__/
+tools/smart_rtu_tool/core/__pycache__/
+tools/smart_rtu_tool/ui/__pycache__/
+tools/smart_rtu_tool/Smart_RTU_Tool_User_Guide.docx
+
+# Doxygen
+latex/
+html/
+CLAUDE.md
+DOCS/
