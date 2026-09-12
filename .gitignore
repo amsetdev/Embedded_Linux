@@ -11,6 +11,7 @@
 # Packages
 *.deb
 .claude 
+.env
 
 # Build directories
 build/
