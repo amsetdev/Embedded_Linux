@@ -537,7 +537,7 @@ int main(void)
     printf("  Topic    : %s\n",
            cfg.mqtt_topic);
 
-    printf("  RS485 DE : PE10 (gpiochip4 line 10) via libmodbus custom RTS\n");
+    printf("  RS485 DE : PE9 (UART7 hardware RTS, kernel RS485 mode)\n");
 
     printf("  Interval : %ds\n\n",
            cfg.interval);

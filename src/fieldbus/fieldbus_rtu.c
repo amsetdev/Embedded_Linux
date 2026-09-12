@@ -3,8 +3,10 @@
  * @brief Modbus RTU fieldbus driver implementation using libmodbus.
  *
  * Wraps libmodbus RTU functions behind the fieldbus_driver_t vtable.
- * Uses modbus_rtu_set_custom_rts() with a GPIO callback to toggle
- * the RS-485 DE pin (PE10 on gpiochip4 line 10).
+ * RS-485 DE/RE direction switching is handled entirely by the kernel:
+ * the device tree enables hardware RS-485 mode on the UART (DE wired to
+ * the USART's own RTS pin), so libmodbus needs no custom RTS callback —
+ * modbus_rtu_set_serial_mode(MODBUS_RTU_RS485) is enough.
  */
 
 #include "fieldbus.h"
@@ -15,21 +17,8 @@
 #include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
-#include <linux/gpio.h>
 
 #include <modbus/modbus.h>
-#include <linux/serial.h>
-
-/* -------------------------------------------------------------------------- */
-/* GPIO DE pin configuration                                                  */
-/* -------------------------------------------------------------------------- */
-
-#define RS485_GPIOCHIP  "/dev/gpiochip4"
-#define RS485_GPIO_LINE 10
-
-/** @brief Pre-TX delay in microseconds (libmodbus RTS delay). */
-#define RS485_RTS_DELAY_US 200
 
 /* -------------------------------------------------------------------------- */
 /* Driver context                                                             */
@@ -44,117 +33,7 @@ typedef struct
     char      port[64];
     int       baud;
     int       slave_id;
-    int       gpio_fd;
-    int       gpio_line_fd;
 } rtu_ctx_t;
-
-/** @brief Static pointer for RTS callback (single RTU instance). */
-static rtu_ctx_t *g_rtu_ctx = NULL;
-
-/* -------------------------------------------------------------------------- */
-/* GPIO DE control                                                            */
-/* -------------------------------------------------------------------------- */
-
-/**
- * @brief Initialize the RS-485 DE GPIO pin.
- *
- * Opens gpiochip4 and requests line 10 as output, initially LOW (RX mode).
- *
- * @param ctx RTU driver context.
- * @return 0 on success, -1 on failure.
- */
-static int gpio_de_init(rtu_ctx_t *ctx)
-{
-    ctx->gpio_fd = open(RS485_GPIOCHIP, O_RDONLY);
-
-    if (ctx->gpio_fd < 0)
-    {
-        perror("[FIELDBUS_RTU] open /dev/gpiochip4");
-        return -1;
-    }
-
-    struct gpiohandle_request req;
-    memset(&req, 0, sizeof(req));
-    req.lineoffsets[0]    = RS485_GPIO_LINE;
-    req.lines             = 1;
-    req.flags             = GPIOHANDLE_REQUEST_OUTPUT;
-    req.default_values[0] = 0;
-    strncpy(req.consumer_label,
-            "modbus_rtu_de",
-            sizeof(req.consumer_label) - 1);
-
-    if (ioctl(ctx->gpio_fd, GPIO_GET_LINEHANDLE_IOCTL, &req) < 0)
-    {
-        perror("[FIELDBUS_RTU] GPIO_GET_LINEHANDLE_IOCTL");
-        close(ctx->gpio_fd);
-        ctx->gpio_fd = -1;
-        return -1;
-    }
-
-    ctx->gpio_line_fd = req.fd;
-
-    printf("[FIELDBUS_RTU] GPIO DE (PE10) init OK\n");
-
-    return 0;
-}
-
-/**
- * @brief Set the DE GPIO pin value.
- *
- * @param ctx RTU driver context.
- * @param on  1 for HIGH (TX mode), 0 for LOW (RX mode).
- */
-static void gpio_de_set(rtu_ctx_t *ctx, int on)
-{
-    if (ctx->gpio_line_fd < 0)
-        return;
-
-    struct gpiohandle_data d;
-    memset(&d, 0, sizeof(d));
-    d.values[0] = on ? 1 : 0;
-
-    ioctl(ctx->gpio_line_fd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, &d);
-}
-
-/**
- * @brief Release GPIO DE resources.
- *
- * @param ctx RTU driver context.
- */
-static void gpio_de_close(rtu_ctx_t *ctx)
-{
-    if (ctx->gpio_line_fd >= 0)
-    {
-        close(ctx->gpio_line_fd);
-        ctx->gpio_line_fd = -1;
-    }
-
-    if (ctx->gpio_fd >= 0)
-    {
-        close(ctx->gpio_fd);
-        ctx->gpio_fd = -1;
-    }
-}
-
-/**
- * @brief Custom RTS callback for libmodbus.
- *
- * Called by libmodbus before TX (on=1) and after TX (on=0) to
- * control the RS-485 DE pin direction.
- *
- * @param mb_ctx libmodbus context (unused — context via static pointer).
- * @param on     1 = transmit mode, 0 = receive mode.
- */
-static void rtu_rts_callback(modbus_t *mb_ctx, int on)
-{
-    (void)mb_ctx;
-
-    printf("[FIELDBUS_RTU] RTS callback: DE=%s\n",
-           on ? "HIGH (TX)" : "LOW (RX)");
-
-    if (g_rtu_ctx)
-        gpio_de_set(g_rtu_ctx, on);
-}
 
 /* -------------------------------------------------------------------------- */
 /* Helper: map parity string to char                                          */
@@ -184,7 +63,7 @@ static char parity_char(const char *parity_str)
  * @brief Initialize the Modbus RTU driver.
  *
  * Creates a libmodbus RTU context, configures serial parameters,
- * sets up the custom RTS callback for GPIO DE control, and connects.
+ * connects, and enables kernel hardware RS-485 mode.
  *
  * @param config Fieldbus configuration (uses serial_port, baud, slave_id, parity, stop_bits).
  * @return Opaque context handle, or NULL on failure.
@@ -195,9 +74,6 @@ static void *rtu_init(const fieldbus_config_t *config)
 
     if (!ctx)
         return NULL;
-
-    ctx->gpio_fd      = -1;
-    ctx->gpio_line_fd = -1;
 
     strncpy(ctx->port, config->serial_port, sizeof(ctx->port) - 1);
     ctx->port[sizeof(ctx->port) - 1] = '\0';
@@ -239,25 +115,6 @@ static void *rtu_init(const fieldbus_config_t *config)
     /* Response timeout: 1 second. */
     modbus_set_response_timeout(ctx->mb_ctx, 1, 0);
 
-    /* Initialize GPIO DE pin. */
-    if (gpio_de_init(ctx) < 0)
-    {
-        fprintf(stderr,
-                "[FIELDBUS_RTU] GPIO DE init failed — "
-                "continuing without DE control\n");
-    }
-
-    /*
-     * Store context for the static RTS callback.
-     * Set custom RTS and delay BEFORE connect — these just store
-     * values in the libmodbus context struct and don't need an
-     * open fd.
-     */
-    g_rtu_ctx = ctx;
-
-    modbus_rtu_set_custom_rts(ctx->mb_ctx, rtu_rts_callback);
-    modbus_rtu_set_rts_delay(ctx->mb_ctx, RS485_RTS_DELAY_US);
-
     /* Connect (opens serial port). */
     if (modbus_connect(ctx->mb_ctx) == -1)
     {
@@ -265,47 +122,25 @@ static void *rtu_init(const fieldbus_config_t *config)
                 "[FIELDBUS_RTU] Connection to %s failed: %s\n",
                 ctx->port,
                 modbus_strerror(errno));
-        g_rtu_ctx = NULL;
-        gpio_de_close(ctx);
         modbus_free(ctx->mb_ctx);
         free(ctx);
         return NULL;
     }
 
     /*
-     * Set RS-485 mode AFTER connect — modbus_rtu_set_serial_mode()
-     * does a TIOCSRS485 ioctl that requires an open fd.
+     * Enable RS-485 mode AFTER connect — modbus_rtu_set_serial_mode()
+     * does a TIOCSRS485 ioctl that requires an open fd. The device
+     * tree already enables RS-485 at boot (linux,rs485-enabled-at-
+     * boot-time) with DE wired to the USART's hardware RTS pin, so
+     * this just confirms the kernel driver has it enabled — no GPIO
+     * or custom RTS callback needed.
      */
     if (modbus_rtu_set_serial_mode(ctx->mb_ctx,
                                     MODBUS_RTU_RS485) == -1)
     {
         fprintf(stderr,
-                "[FIELDBUS_RTU] modbus_rtu_set_serial_mode failed: %s "
-                "— continuing with custom RTS only\n",
+                "[FIELDBUS_RTU] modbus_rtu_set_serial_mode failed: %s\n",
                 modbus_strerror(errno));
-    }
-
-    /*
-     * Disable kernel RS485 on the raw fd.
-     *
-     * On the STM32MP157F-DK2 the RS485 DE pin (PE10) is routed to
-     * a GPIO, NOT to the USART's hardware RTS/DE pin. The kernel
-     * RS485 mode would toggle the wrong pin (or none at all). Our
-     * custom RTS callback handles PE10 via GPIO instead.
-     *
-     * libmodbus still sees serial_mode == RS485 internally, so it
-     * will call the custom RTS callback before/after every TX.
-     */
-    {
-        int fd = modbus_get_socket(ctx->mb_ctx);
-        struct serial_rs485 rs485conf;
-        memset(&rs485conf, 0, sizeof(rs485conf));
-        rs485conf.flags = 0;
-        if (ioctl(fd, TIOCSRS485, &rs485conf) == 0)
-        {
-            printf("[FIELDBUS_RTU] Kernel RS485 disabled — "
-                   "using GPIO DE (PE10)\n");
-        }
     }
 
     /* Enable libmodbus debug output to see raw frames. */
@@ -613,11 +448,6 @@ static void rtu_close(void *vctx)
             modbus_close(ctx->mb_ctx);
             modbus_free(ctx->mb_ctx);
         }
-
-        gpio_de_close(ctx);
-
-        if (g_rtu_ctx == ctx)
-            g_rtu_ctx = NULL;
 
         printf("[FIELDBUS_RTU] Disconnected from %s\n",
                ctx->port);
