@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdatomic.h>
+#include <pthread.h>
 
 static ModbusPoint points[MAX_POINTS];
 static int point_count = 0;
@@ -25,6 +26,9 @@ static int point_count = 0;
 
 static const fieldbus_driver_t *rtu_driver = NULL;
 static void *rtu_ctx = NULL;
+
+/** @brief Mutex protecting rtu_driver/rtu_ctx for thread-safe access. */
+static pthread_mutex_t bus_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*-----------------------------------------------------------*/
 /* Fieldbus Driver Management                                */
@@ -359,6 +363,8 @@ int read_point(ModbusPoint *pt)
         return 0;
     }
 
+    pthread_mutex_lock(&bus_mutex);
+
     /* Switch to the register's slave ID before reading. */
     if (rtu_driver->set_slave &&
         pt->slave_id > 0)
@@ -368,7 +374,11 @@ int read_point(ModbusPoint *pt)
 
     /* 32-bit types (float32, int32) require a 2-register block read. */
     if (pt->data_type == 'f' || pt->data_type == 'd')
-        return read_point_32bit(pt);
+    {
+        int rc = read_point_32bit(pt);
+        pthread_mutex_unlock(&bus_mutex);
+        return rc;
+    }
 
     fb_reg_type_t rt = map_reg_type(pt->reg_type);
 
@@ -383,6 +393,7 @@ int read_point(ModbusPoint *pt)
         {
             pt->value = value;
             pt->valid = 1;
+            pthread_mutex_unlock(&bus_mutex);
             return 1;
         }
 
@@ -396,6 +407,7 @@ int read_point(ModbusPoint *pt)
 
     pt->valid = 0;
 
+    pthread_mutex_unlock(&bus_mutex);
     return 0;
 }
 
@@ -431,105 +443,74 @@ void read_all_points(void)
 }
 
 /*-----------------------------------------------------------*/
-/**
- * @brief Write a single register or coil via the fieldbus driver.
- *
- * @param slave_id Modbus slave address (1-247).
- * @param reg_type Register type (REG_HOLDING or REG_COIL).
- * @param addr     Register or coil address.
- * @param value    Value to write.
- *
- * @return 1 on success, 0 on failure.
- */
+/* Write API (called from MQTT command handler thread)       */
 /*-----------------------------------------------------------*/
 
-int data_write_register(int slave_id,
-                        RegType reg_type,
-                        uint16_t addr,
-                        uint16_t value)
+/**
+ * @brief Write a single Modbus register or coil.
+ */
+int data_write_register(int slave, fb_reg_type_t reg_type,
+                        uint16_t addr, uint16_t value)
 {
-    if (!rtu_driver || !rtu_ctx)
-    {
-        fprintf(stderr, "[DATA] No driver initialized for write\n");
+    if (!rtu_driver || !rtu_ctx || !rtu_driver->write_register)
         return 0;
-    }
 
-    if (!rtu_driver->write_register)
-    {
-        fprintf(stderr, "[DATA] Driver does not support write\n");
-        return 0;
-    }
+    pthread_mutex_lock(&bus_mutex);
 
-    if (rtu_driver->set_slave && slave_id > 0)
-        rtu_driver->set_slave(rtu_ctx, slave_id);
+    if (rtu_driver->set_slave)
+        rtu_driver->set_slave(rtu_ctx, slave);
 
-    fb_reg_type_t rt = map_reg_type(reg_type);
+    fieldbus_status_t rc = rtu_driver->write_register(rtu_ctx,
+                                                       reg_type,
+                                                       addr,
+                                                       value);
 
-    fieldbus_status_t rc =
-        rtu_driver->write_register(rtu_ctx, rt, addr, value);
+    pthread_mutex_unlock(&bus_mutex);
 
     if (rc == FIELDBUS_OK)
     {
-        printf("[DATA] Write OK: slave=%d addr=%d value=%u\n",
-               slave_id, addr, (unsigned)value);
+        printf("[DATA] Write OK  : slave=%d addr=%u val=%u\n",
+               slave, addr, value);
         return 1;
     }
 
-    fprintf(stderr, "[DATA] Write FAIL: slave=%d addr=%d value=%u\n",
-            slave_id, addr, (unsigned)value);
-
+    fprintf(stderr, "[DATA] Write FAIL: slave=%d addr=%u val=%u rc=%d\n",
+            slave, addr, value, rc);
     return 0;
 }
 
-/*-----------------------------------------------------------*/
 /**
  * @brief Write a contiguous block of registers or coils.
- *
- * @param slave_id Modbus slave address (1-247).
- * @param reg_type Register type (REG_HOLDING or REG_COIL).
- * @param start    Starting address.
- * @param count    Number of registers/coils.
- * @param values   Array of values to write.
- *
- * @return 1 on success, 0 on failure.
  */
-/*-----------------------------------------------------------*/
-
-int data_write_block(int slave_id,
-                     RegType reg_type,
-                     uint16_t start,
-                     int count,
+int data_write_block(int slave, fb_reg_type_t reg_type,
+                     uint16_t addr, int count,
                      const uint16_t *values)
 {
-    if (!rtu_driver || !rtu_ctx)
-    {
-        fprintf(stderr, "[DATA] No driver initialized for write\n");
+    if (!rtu_driver || !rtu_ctx || !rtu_driver->write_block)
         return 0;
-    }
 
-    if (!rtu_driver->write_block)
-    {
-        fprintf(stderr, "[DATA] Driver does not support block write\n");
-        return 0;
-    }
+    pthread_mutex_lock(&bus_mutex);
 
-    if (rtu_driver->set_slave && slave_id > 0)
-        rtu_driver->set_slave(rtu_ctx, slave_id);
+    if (rtu_driver->set_slave)
+        rtu_driver->set_slave(rtu_ctx, slave);
 
-    fb_reg_type_t rt = map_reg_type(reg_type);
+    fieldbus_status_t rc = rtu_driver->write_block(rtu_ctx,
+                                                    reg_type,
+                                                    addr,
+                                                    count,
+                                                    values);
 
-    fieldbus_status_t rc =
-        rtu_driver->write_block(rtu_ctx, rt, start, count, values);
+    pthread_mutex_unlock(&bus_mutex);
 
     if (rc == FIELDBUS_OK)
     {
-        printf("[DATA] Block write OK: slave=%d start=%d count=%d\n",
-               slave_id, start, count);
+        printf("[DATA] Block write OK  : slave=%d addr=%u count=%d\n",
+               slave, addr, count);
         return 1;
     }
 
-    fprintf(stderr, "[DATA] Block write FAIL: slave=%d start=%d count=%d\n",
-            slave_id, start, count);
-
+    fprintf(stderr, "[DATA] Block write FAIL: slave=%d addr=%u count=%d rc=%d\n",
+            slave, addr, count, rc);
     return 0;
 }
+

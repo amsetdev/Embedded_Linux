@@ -187,40 +187,35 @@ int read_point(ModbusPoint *pt);
 void read_all_points(void);
 
 /**
- * @brief Write a single register or coil via the fieldbus driver.
+ * @brief Write a single Modbus register or coil.
  *
- * Supports holding registers (FC06) and coils (FC05).
- * Input registers and discrete inputs are read-only and will fail.
+ * Thread-safe (protected by internal mutex).
  *
- * @param slave_id Modbus slave address (1-247).
- * @param reg_type Register type (REG_HOLDING or REG_COIL).
- * @param addr     Register or coil address.
+ * @param slave    Modbus slave address.
+ * @param reg_type Fieldbus register type (FB_REG_COIL or FB_REG_HOLDING).
+ * @param addr     Register/coil address.
  * @param value    Value to write.
  *
  * @return 1 on success, 0 on failure.
  */
-int data_write_register(int slave_id,
-                        RegType reg_type,
-                        uint16_t addr,
-                        uint16_t value);
+int data_write_register(int slave, fb_reg_type_t reg_type,
+                        uint16_t addr, uint16_t value);
 
 /**
  * @brief Write a contiguous block of registers or coils.
  *
- * Supports holding registers (FC16) and coils (FC15).
+ * Thread-safe (protected by internal mutex).
  *
- * @param slave_id Modbus slave address (1-247).
- * @param reg_type Register type (REG_HOLDING or REG_COIL).
- * @param start    Starting address.
- * @param count    Number of registers/coils.
+ * @param slave    Modbus slave address.
+ * @param reg_type Fieldbus register type (FB_REG_COIL or FB_REG_HOLDING).
+ * @param addr     Starting address.
+ * @param count    Number of registers/coils to write.
  * @param values   Array of values to write.
  *
  * @return 1 on success, 0 on failure.
  */
-int data_write_block(int slave_id,
-                     RegType reg_type,
-                     uint16_t start,
-                     int count,
+int data_write_block(int slave, fb_reg_type_t reg_type,
+                     uint16_t addr, int count,
                      const uint16_t *values);
 
 #ifdef __cplusplus

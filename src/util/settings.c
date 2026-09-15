@@ -71,6 +71,13 @@ void settings_defaults(void)
     cfg.watchdog_enable = WATCHDOG_ENABLE_DEF;
     cfg.watchdog_timeout = WATCHDOG_TIMEOUT_DEF;
 
+    /* Commands */
+
+    snprintf(cfg.cmd_topic, sizeof(cfg.cmd_topic),
+             CMD_TOPIC_DEF, cfg.device_id);
+    snprintf(cfg.cmd_response_topic, sizeof(cfg.cmd_response_topic),
+             CMD_RESPONSE_TOPIC_DEF, cfg.device_id);
+
     /* OTA */
 
     cfg.ota_enable = OTA_ENABLE_DEF;
@@ -290,6 +297,25 @@ int settings_load(void)
     }
 
     /*------------------------------------------------------*/
+    /* Commands (Modbus write via MQTT)                      */
+    /*------------------------------------------------------*/
+
+    char *cmds = strstr(json, "\"commands\"");
+
+    if (cmds)
+    {
+        json_get_string(cmds,
+                        "cmd_topic",
+                        cfg.cmd_topic,
+                        sizeof(cfg.cmd_topic));
+
+        json_get_string(cmds,
+                        "cmd_response_topic",
+                        cfg.cmd_response_topic,
+                        sizeof(cfg.cmd_response_topic));
+    }
+
+    /*------------------------------------------------------*/
     /* Watchdog                                              */
     /*------------------------------------------------------*/
 
@@ -341,6 +367,9 @@ int settings_load(void)
     printf("OTA Dir        : %s\n", cfg.ota_download_dir);
     printf("App Version    : %s\n", cfg.app_version);
     printf("App Binary     : %s\n", cfg.app_binary_path);
+
+    printf("Cmd Topic      : %s\n", cfg.cmd_topic);
+    printf("Cmd Resp Topic : %s\n", cfg.cmd_response_topic);
 
     printf("WDG Enable     : %d\n", cfg.watchdog_enable);
     printf("WDG Timeout    : %ds\n", cfg.watchdog_timeout);

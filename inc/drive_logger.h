@@ -16,7 +16,6 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
-#include <stdint.h>
 
 /* -------------------------------------------------------------------------- */
 /* Configuration                                                               */
@@ -100,32 +99,6 @@ extern "C" {
 #define DRIVE_LOG_INFO     3
 
 /* -------------------------------------------------------------------------- */
-/* Statistics                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * @brief Drive logger runtime statistics.
- */
-typedef struct
-{
-    /** Total log messages captured. */
-    uint32_t total_captured;
-
-    /** Total error messages captured. */
-    uint32_t total_errors;
-
-    /** Total warning messages captured. */
-    uint32_t total_warnings;
-
-    /** Total log messages successfully uploaded. */
-    uint32_t total_uploaded;
-
-    /** Total upload failures. */
-    uint32_t upload_failures;
-
-} drive_logger_stats_t;
-
-/* -------------------------------------------------------------------------- */
 /* API                                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -165,22 +138,6 @@ void drive_logger_write(int level,
                         const char *fmt,
                         ...)
     __attribute__((format(printf, 3, 4)));
-
-/**
- * @brief Retrieves current logger statistics.
- *
- * @param stats Pointer to the statistics structure to populate.
- */
-void drive_logger_get_stats(drive_logger_stats_t *stats);
-
-/**
- * @brief Checks whether the logger is running.
- *
- * @return
- * - true if the logger is active.
- * - false otherwise.
- */
-bool drive_logger_is_running(void);
 
 /* -------------------------------------------------------------------------- */
 /* Convenience Logging Macros                                                  */

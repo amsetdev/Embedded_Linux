@@ -14,6 +14,7 @@
 #include "storage.h"
 #include "connection.h"
 #include "ota.h"
+#include "mb_cmd.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -28,6 +29,23 @@ atomic_int mqtt_connected = 0;
 
 /** @brief Mosquitto client instance. */
 static struct mosquitto *mosq = NULL;
+
+/**
+ * @brief MQTT message dispatcher.
+ *
+ * Routes incoming messages to the appropriate handler based on topic.
+ *
+ * @param m   Mosquitto client instance.
+ * @param ud  User data pointer.
+ * @param msg Received MQTT message.
+ */
+static void on_message(struct mosquitto *m,
+                       void *ud,
+                       const struct mosquitto_message *msg)
+{
+    ota_on_message(m, ud, msg);
+    mb_cmd_on_message(m, ud, msg);
+}
 
 /**
  * @brief MQTT connection callback.
@@ -59,6 +77,10 @@ static void on_connect(struct mosquitto *m, void *ud, int rc)
             printf("[MQTT] Subscribed to OTA topics\n");
         }
 
+        /* Subscribe to Modbus write command topic. */
+        mosquitto_subscribe(m, NULL, cfg.cmd_topic, 1);
+        printf("[MQTT] Subscribed to command topic: %s\n", cfg.cmd_topic);
+
         /* Start offline replay now that we are connected. */
         offline_replay_start();
 
@@ -87,16 +109,6 @@ static void on_disconnect(struct mosquitto *m, void *ud, int rc)
         printf("[MQTT] Disconnected (clean)\n");
     else
         fprintf(stderr, "[MQTT] Disconnected unexpectedly (rc=%d)\n", rc);
-}
-
-/**
- * @brief Returns the Mosquitto client instance.
- *
- * @return Pointer to the active client, or NULL.
- */
-struct mosquitto *mqtt_get_mosq(void)
-{
-    return mosq;
 }
 
 /**
@@ -198,10 +210,7 @@ int mqtt_init(void)
     mosquitto_connect_callback_set(mosq, on_connect);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
-    if (cfg.ota_enable)
-    {
-        mosquitto_message_callback_set(mosq, ota_on_message);
-    }
+    mosquitto_message_callback_set(mosq, on_message);
 
     printf("[MQTT] Connecting to %s:%d (client: %s)\n",
            cfg.mqtt_broker,

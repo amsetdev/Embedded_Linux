@@ -110,6 +110,16 @@ extern "C" {
 #define APP_BINARY_PATH_DEF    "/home/root/edb_c/linking/main"
 
 /* -------------------------------------------------------------------------- */
+/* Default Command (Modbus Write) Configuration                               */
+/* -------------------------------------------------------------------------- */
+
+/** @brief Default MQTT topic for Modbus write commands. */
+#define CMD_TOPIC_DEF          "devices/%s/commands"
+
+/** @brief Default MQTT topic for command responses. */
+#define CMD_RESPONSE_TOPIC_DEF "devices/%s/commands/response"
+
+/* -------------------------------------------------------------------------- */
 /* Default Watchdog Configuration                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -255,6 +265,14 @@ typedef struct
     /** @brief Path to the application binary on the board. */
     char app_binary_path[256];
 
+    /* Commands (Modbus write via MQTT) */
+
+    /** @brief MQTT topic for incoming Modbus write commands. */
+    char cmd_topic[128];
+
+    /** @brief MQTT topic for command responses. */
+    char cmd_response_topic[128];
+
     /* Watchdog */
 
     /** @brief Watchdog enable flag. */
@@ -319,26 +337,6 @@ int settings_reload(void);
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief Returns the configured Wi-Fi SSID.
- *
- * @return Pointer to the Wi-Fi SSID string.
- */
-static inline const char *settings_get_ssid(void)
-{
-    return cfg.wifi_ssid;
-}
-
-/**
- * @brief Returns the configured Wi-Fi password.
- *
- * @return Pointer to the Wi-Fi password string.
- */
-static inline const char *settings_get_password(void)
-{
-    return cfg.wifi_password;
-}
-
-/**
  * @brief Returns the configured Modbus slave address.
  *
  * @return Modbus slave ID.
@@ -346,26 +344,6 @@ static inline const char *settings_get_password(void)
 static inline int settings_get_slave(void)
 {
     return cfg.modbus_slave;
-}
-
-/**
- * @brief Returns the configured Modbus baud rate.
- *
- * @return Modbus baud rate.
- */
-static inline int settings_get_baud(void)
-{
-    return cfg.modbus_baud;
-}
-
-/**
- * @brief Returns the configured polling interval.
- *
- * @return Polling interval in seconds.
- */
-static inline int settings_get_interval(void)
-{
-    return cfg.interval;
 }
 
 #ifdef __cplusplus

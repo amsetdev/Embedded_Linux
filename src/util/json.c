@@ -197,3 +197,59 @@ int json_get_int_from(const char *object,
                         key,
                         value);
 }
+
+/**
+ * @brief Parses a JSON integer array into a C int buffer.
+ *
+ * @param json      Pointer to the JSON text.
+ * @param key       JSON key whose value is an array.
+ * @param values    Output buffer for parsed integers.
+ * @param max_count Maximum number of elements to parse.
+ *
+ * @return Number of elements parsed, or -1 on error.
+ */
+int json_get_int_array(const char *json,
+                       const char *key,
+                       int *values,
+                       int max_count)
+{
+    char pattern[64];
+
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+
+    const char *p = strstr(json, pattern);
+
+    if (!p)
+        return -1;
+
+    p = strchr(p, '[');
+
+    if (!p)
+        return -1;
+
+    p++; /* skip '[' */
+
+    int count = 0;
+
+    while (*p && *p != ']' && count < max_count)
+    {
+        /* skip whitespace and commas */
+        while (*p == ' ' || *p == '\t' || *p == '\n' ||
+               *p == '\r' || *p == ',')
+            p++;
+
+        if (*p == ']')
+            break;
+
+        values[count++] = atoi(p);
+
+        /* advance past the number */
+        if (*p == '-')
+            p++;
+
+        while (*p >= '0' && *p <= '9')
+            p++;
+    }
+
+    return count;
+}

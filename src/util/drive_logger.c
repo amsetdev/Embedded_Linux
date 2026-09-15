@@ -929,31 +929,3 @@ void drive_logger_write(int level, const char *tag, const char *fmt, ...)
     fflush(stderr);
 }
 
-/**
- * @brief Retrieves current logger statistics.
- *
- * Copies the current values of all internal counters into the
- * provided statistics structure.
- *
- * @param stats  Pointer to a drive_logger_stats_t structure to populate.
- *               If NULL, no action is taken.
- */
-void drive_logger_get_stats(drive_logger_stats_t *stats)
-{
-    if (!stats) return;
-    stats->total_captured  = s_total_captured;
-    stats->total_errors    = s_total_errors;
-    stats->total_warnings  = s_total_warnings;
-    stats->total_uploaded  = s_total_uploaded;
-    stats->upload_failures = s_upload_failures;
-}
-
-/**
- * @brief Checks if the drive logger is currently running.
- *
- * @return true if the logger is active, false otherwise.
- */
-bool drive_logger_is_running(void)
-{
-    return s_logger_active;
-}

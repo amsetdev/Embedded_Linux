@@ -117,6 +117,24 @@ int json_get_int_from(const char *object,
                       const char *key,
                       int *value);
 
+/**
+ * @brief Parses a JSON integer array into a C int buffer.
+ *
+ * Locates the specified key and reads the associated array of
+ * integer values (e.g., [1, 500, 3]) into the caller's buffer.
+ *
+ * @param json      Pointer to the JSON text.
+ * @param key       JSON key whose value is an array.
+ * @param values    Output buffer for parsed integers.
+ * @param max_count Maximum number of elements to parse.
+ *
+ * @return Number of elements parsed, or -1 on error.
+ */
+int json_get_int_array(const char *json,
+                       const char *key,
+                       int *values,
+                       int max_count);
+
 #ifdef __cplusplus
 }
 #endif

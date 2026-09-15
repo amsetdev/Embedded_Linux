@@ -92,13 +92,6 @@ void mqtt_publish(const char *payload);
 void mqtt_cleanup(void);
 
 /**
- * @brief Returns the Mosquitto client instance.
- *
- * @return Pointer to the active Mosquitto client, or NULL.
- */
-struct mosquitto *mqtt_get_mosq(void);
-
-/**
  * @brief Publishes a payload to an arbitrary MQTT topic.
  *
  * @param topic MQTT topic to publish to.
