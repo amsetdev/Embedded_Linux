@@ -1,0 +1,575 @@
+{
+  "device_id": "loop_1",
+  "slave_id": 1,
+  "baud": 9600,
+  "interval_sec": 30,
+  "parity": "None",
+  "stop_bits": 1,
+  "points": [
+    {
+      "label": "REG_1",
+      "address": 0,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "REG_2",
+      "address": 1,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "REG_3",
+      "address": 2,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "REG_4",
+      "address": 3,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "REG_5",
+      "address": 4,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "bmA1A_LOD_VLV_STS",
+      "address": 7,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "bmA1A_SUP_VLV_STS",
+      "address": 8,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "bmA1B_LOD_VLV_STS",
+      "address": 9,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "bmA1B_SUP_VLV_STS",
+      "address": 10,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_almAI1_LVL_STS",
+      "address": 11,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_almAI2_LVL_STS",
+      "address": 12,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_almAI3_LVL_STS",
+      "address": 13,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_almAI4_LVL_STS",
+      "address": 14,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "REG_6",
+      "address": 25,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_RW_SWAP3",
+      "address": 26,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_almDELAY_TIME_S",
+      "address": 27,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1_lvl_DELAY_TIME_S",
+      "address": 28,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_START1",
+      "address": 29,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_START1",
+      "address": 30,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_START2",
+      "address": 31,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_START2",
+      "address": 32,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_START3",
+      "address": 33,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_START3",
+      "address": 34,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_START4",
+      "address": 35,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_START4",
+      "address": 36,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_START1",
+      "address": 37,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_START1",
+      "address": 38,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_START2",
+      "address": 39,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_START2",
+      "address": 40,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_START3",
+      "address": 41,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_START3",
+      "address": 42,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_START4",
+      "address": 43,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_START4",
+      "address": 44,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_STOP1",
+      "address": 45,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_STOP1",
+      "address": 46,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_STOP2",
+      "address": 47,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_STOP2",
+      "address": 48,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_STOP3",
+      "address": 49,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_STOP3",
+      "address": 50,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_H_STOP4",
+      "address": 51,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1A_SUP_M_STOP4",
+      "address": 52,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_STOP1",
+      "address": 53,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_STOP1",
+      "address": 54,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_STOP2",
+      "address": 55,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_STOP2",
+      "address": 56,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_STOP3",
+      "address": 57,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_STOP3",
+      "address": 58,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_H_STOP4",
+      "address": 59,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "A1B_SUP_M_STOP4",
+      "address": 60,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "uint16",
+      "unit": ""
+    },
+    {
+      "label": "AI0_A1A_HH",
+      "address": 62,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI0_A1A_HL",
+      "address": 64,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI0_A1A_LH",
+      "address": 66,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI0_A1A_LL",
+      "address": 68,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI1_A1B_HH",
+      "address": 70,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI1_A1B_HL",
+      "address": 72,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI1_A1B_LH",
+      "address": 74,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI1_A1B_LL",
+      "address": 76,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI2_A1_HH",
+      "address": 78,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI2_A1_HL",
+      "address": 80,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI2_A1_LH",
+      "address": 82,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI2_A1_LL",
+      "address": 84,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI3_A1_HH",
+      "address": 86,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI3_A1_HL",
+      "address": 88,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI3_A1_LH",
+      "address": 90,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI3_A1_LL",
+      "address": 92,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI0_A1A_LVL",
+      "address": 15,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI1_A1B_LVL",
+      "address": 17,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI2_SCALED_A1",
+      "address": 19,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    },
+    {
+      "label": "AI3_SCALED_A1",
+      "address": 21,
+      "slave_id": 1,
+      "register_type": "holding",
+      "data_type": "float32",
+      "unit": ""
+    }
+  ],
+  "wifi_ssid": "",
+  "wifi_password": "",
+  "modbus_tcp_enable": 0,
+  "modbus_tcp_ip": "",
+  "modbus_tcp_port": 502,
+  "modbus_tcp_slave_id": 1,
+  "mqtt_broker": "a38rhx6jdboq9n-ats.iot.ap-south-1.amazonaws.com",
+  "mqtt_port": 8883,
+  "mqtt_client_id": "loop_1",
+  "mqtt_ca_cert": "/home/root/edb_c/linking/ca.crt",
+  "mqtt_device_cert": "/home/root/edb_c/linking/client.crt",
+  "mqtt_private_key": "/home/root/edb_c/linking/private.key",
+  "mqtt_topic": "amset/loop_1/test"
+}

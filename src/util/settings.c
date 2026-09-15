@@ -154,6 +154,18 @@ int settings_load(void)
         json_get_int(device,
                      "stop_bits",
                      &cfg.modbus_stop_bits);
+
+        /* Re-derive topics that embed device_id, now that it's loaded. */
+        snprintf(cfg.ota_app_topic, sizeof(cfg.ota_app_topic),
+                 OTA_APP_TOPIC_DEF, cfg.device_id);
+        snprintf(cfg.ota_system_topic, sizeof(cfg.ota_system_topic),
+                 OTA_SYSTEM_TOPIC_DEF, cfg.device_id);
+        snprintf(cfg.ota_status_topic, sizeof(cfg.ota_status_topic),
+                 OTA_STATUS_TOPIC_DEF, cfg.device_id);
+        snprintf(cfg.cmd_topic, sizeof(cfg.cmd_topic),
+                 CMD_TOPIC_DEF, cfg.device_id);
+        snprintf(cfg.cmd_response_topic, sizeof(cfg.cmd_response_topic),
+                 CMD_RESPONSE_TOPIC_DEF, cfg.device_id);
     }
 
     /*------------------------------------------------------*/
