@@ -4,6 +4,8 @@ How the GitLab pipeline works, how to run every job on your own PC, how to read
 a failure, and how to change things safely. This file describes what is
 **actually implemented**; §10 lists what is still planned.
 
+**What each test checks and how to write one: [`TESTS_GUIDE.md`](TESTS_GUIDE.md).**
+
 The setup mirrors the ESP32 project `std_gw` (same GitLab, same runner), adapted
 to a cross-compiled Linux application on a Cortex-A7.
 
@@ -12,12 +14,14 @@ to a cross-compiled Linux application on a Cortex-A7.
 ## 1. The pipeline at a glance
 
 ```
-stage:  validate     static-analysis   build                      unit-test    hardware-test   release
-        ────────     ───────────────   ─────                      ─────────    ─────────────   ───────
-        (step 2)     (step 4)          build-firmware ──►         (steps 3/5)  (step 7)        (step 6)
-                                       compiler-warnings
+stage:  validate           static-analysis   build                      unit-test    hardware-test   release
+        ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
+        validate-configs   (step 4)          build-firmware ──►         (steps 3/5)  (step 7)        (step 6)
+                                             compiler-warnings
 ```
 
+* `validate-configs` (`needs: []`) starts immediately and takes seconds.
+  `build-firmware` waits for the `validate` stage, so a bad config stops the build.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
   collects the runtime libraries into `build/lib/`.
 * `compiler-warnings` reads the build log and fails on any compiler warning that
@@ -41,9 +45,15 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | Path | What |
 |---|---|
 | `.gitlab-ci.yml` | stages, workflow rules, global variables (`BUILD_IMAGE`), includes |
+| `.gitlab/ci/validate.yml` | `validate-configs` |
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
 | `tools/ci/install_toolchain.sh` | **the** package list: armhf cross gcc + armhf libmodbus/mosquitto/sqlite3/ssl/curl/zlib. Used by CI and by the `Dockerfile` |
 | `tools/ci/build_info.py` | writes `build/build_info.json` |
+| `tests/pytest.ini`, `tests/requirements.txt` | pytest config (markers, strict xfail) and test dependencies |
+| `tests/schemas/smart_rtu_config.schema.json` | JSON schema of the config file |
+| `tests/validate/` | config rules, the real-firmware-parser harness, contract tests, `validate_config.py` CLI |
+| `tests/fixtures/configs/` | known-good test config (`full_config.json`) |
+| `configs/` | real device configs, one per device (validated automatically; none yet) |
 | `tests/static/warnings_gate.py` | compiler-warning gate |
 | `tests/static/compiler-warnings-baseline.json` | warnings accepted when the gate was added (9) |
 | `Dockerfile` | local build environment (same packages via `install_toolchain.sh`) |
@@ -97,7 +107,13 @@ Run from the repo root.
 |---|---|
 | build (as you always did) | `docker build -t stm32mp1-build .` once, then `docker run --rm -v "$PWD":/project stm32mp1-build make clean all` |
 | build exactly like CI | see §5.1 |
+| validate-configs | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev >/dev/null && pip install -q -r tests/requirements.txt && python -m pytest -c tests/pytest.ini tests/validate -p no:cacheprovider"` |
+| one config only | same, with `python tests/validate/validate_config.py configs/<file>.json` as the last command |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
+
+`--tmpfs /src/build-host:exec` keeps the compiled parser harness out of your tree
+(it is cached in `build-host/validate/` otherwise). On a PC with `gcc`, `pytest` and
+`jsonschema` you can also run `python3 -m pytest -c tests/pytest.ini tests/validate` directly.
 
 The `build/` directory created by Docker belongs to root. `sudo rm -rf build` or
 build in a clone (`git clone -q . /tmp/el && cd /tmp/el`) if that bothers you.
@@ -111,6 +127,8 @@ local image and CI stay identical only if you do.
 ## 4. Reading results in GitLab
 
 * **Pipeline page → job → log**: full output; the last lines say why it failed.
+* **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs`.
+  Known issues show as *skipped* (xfail).
 * **Merge request → Code Quality widget**: new compiler warnings (and cppcheck
   findings, step 4).
 * **Job → Browse / Download artifacts**: `build/main`, `build/lib/`,
@@ -204,12 +222,79 @@ NEW warnings (fix them; see DOCS/CI_CD_GUIDE.md 'compiler-warnings'):
 * The log must come from a **clean** build: an incremental `make` only shows the
   warnings of the files it recompiled (the gate refuses a log with no compile lines).
 
+### 5.3 `validate-configs` — device configs and the tool/firmware contract
+
+**Why it exists.** The firmware reads `smart_rtu_config.json` with a small
+hand-written parser (`src/util/json.c`) that finds every key with `strstr()` **from
+the start of its section to the end of the file**. A key missing from one section is
+silently read from a later one; a string stops at the first `"` (no unescaping); a
+long string is cut to its buffer; `"9600"` or `true` become `0` (`atoi`). None of that
+shows an error on the board.
+
+**How it checks.** `tests/validate/firmware_view.py` compiles the **unmodified**
+`src/util/settings.c`, `src/util/json.c` and `src/fieldbus/data.c` with
+`tests/validate/fw_config_dump.c` for the PC (gcc, ASan + UBSan) and runs
+`settings_load()` + `parse_registers()` on each config. Every field the firmware ends
+up with is compared with what the file says (or the default from
+`settings_defaults()` when the key is absent). A parser crash or sanitizer report on
+any input fails the test too.
+
+**Checks**
+
+* Every `configs/**/*.json`, root `smart_rtu_config*.json` and
+  `tests/fixtures/configs/*.json`:
+  * schema `tests/schemas/smart_rtu_config.schema.json`: required sections and keys,
+    types, ranges (baud list, parity `None/Even/Odd`, stop bits 1/2, slave 1–247,
+    interval 1–3600 s, ports), `"` and `\` forbidden in strings, absolute cert paths,
+    no unknown keys;
+  * rules (`config_checks.py`): duplicate labels (they are the telemetry JSON keys),
+    **overlapping registers** (`int32`/`float32` use Address and Address+1),
+    32-bit types on coil/discrete tables, Address+1 beyond 65535, MQTT topic without
+    `#`/`+`/leading `$`, AWS IoT topic limits (256 bytes, 7 `/`), Modbus TCP IP when
+    enabled, worst-case **telemetry size** vs `PAYLOAD_MAX` (128 KB, `inc/mqtt.h`),
+    at most `MAX_POINTS` (2000) registers;
+  * the **real firmware parser** reads every value exactly as written; strings fit
+    their `char[]` (label 63 bytes, device_id 63, broker 255, …; UTF-8 bytes count).
+* Configs built by the tool's own `DeviceConfig` (`test_tool_contract.py`), its CSV
+  export matching the JSON, and the type names (`test_type_consistency.py`).
+* 41 negative cases and 10 "must be allowed" cases (`test_negative_configs.py`).
+
+**Reading a failure**
+```
+configs/plant_a.json has 2 problem(s):
+  firmware reads wifi.enable = 0, the file means 1 (the key is missing here, so the
+    firmware's parser (src/util/json.c) took it from a later part of the file; write it explicitly)
+  overlap: registers[7] 'P2_KWH' (float32, holding 6412-6413) reuses slave 1 holding
+    register 6413 of registers[6] 'P1_KWH' (float32)
+```
+`registers[7]` is the 0-based index in the `registers` array. Fix the config (usually
+in the tool or the Excel sheet), then re-export.
+
+**Common changes**
+
+| You want to… | Do |
+|---|---|
+| add / update a device config | put it in `configs/<device_id>.json`. Nothing else: the glob picks it up |
+| check a config before sending it | `validate_config.py` (§3) |
+| the firmware reads a new key | add it to `settings_load()` **and** to `dump_settings()` in `tests/validate/fw_config_dump.c`, to the schema, and to `tests/fixtures/configs/full_config.json` |
+| the tool writes a new key | schema + fixture + a negative case |
+| a firmware buffer size changes | nothing for the firmware check (the harness reports `sizeof`); update the schema `maxLength` |
+
 ---
 
 ## 6. Known issues
 
+A test for a bug that isn't fixed yet stays **in the suite** as a strict xfail
+(`@pytest.mark.xfail(strict=True, reason=…)`): it shows as *xfailed* and **fails once
+the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal test.
+
 | Issue | Note |
 |---|---|
+| The tool doesn't write `wifi.enable`; the firmware reads `modbus_tcp.enable` instead, so **Wi-Fi is disabled whenever Modbus TCP is** | `test_tool_contract.py::test_wifi_stays_enabled_when_modbus_tcp_disabled` |
+| For a register on the device's default slave the tool omits `slave_id`; the firmware takes the **next register's** `slave_id` | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave` |
+| OTA topics are built from the default device_id before the config is read: **every gateway uses `devices/AMSET-001/ota/*`** (the tool writes no `ota` section) | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
+| The tool's own validation accepts labels > 63 bytes, labels with `"`, overlapping 32-bit registers (the validate rules reject them) | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` (3 cases) |
+| `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`) | change it on that network, and make the defaults empty |
 | The AWS IoT key (`private.key`) and the board password (`.env`) are still in **git history**, and the project is **public** on this GitLab | removed from the tree (§9). Rotate both; consider making the project private |
 | 9 compiler warnings | baseline (§5.2) |
 
@@ -224,6 +309,14 @@ to `BUILD_SUBDIRS`). It is then built and warning-gated automatically.
 `LDFLAGS` in the `makefile`; `collect-libs.sh` picks up the `.so` by itself.
 Rebuild your local image.
 
+**New register type or data type**
+1. Firmware: `RegType` (`inc/data.h`) / `reg_type_from_string()` or
+   `data_type_from_string()` (`src/fieldbus/data.c`), and the read/payload code.
+2. Tool: `VALID_REG_TYPES`/`VALID_DATA_TYPES` (`core/register_model.py`),
+   `REG_TYPES`/`DATA_TYPES` (`ui/main_window.py`), `excel_import.py` synonyms.
+3. Schema enums; `REG_TYPE_CODE`/`DATA_TYPE_CODE`/`REGISTER_WIDTH` in `config_checks.py`.
+4. `test_type_consistency.py` fails until 1–3 agree. Add the type to `full_config.json`.
+
 **New CI job**
 * `tags: [docker]` comes from `default:`; never use `hardware` (ESP32 rig).
 * Use `needs: []` if it doesn't need build artifacts, so it starts immediately.
@@ -237,7 +330,11 @@ Rebuild your local image.
 
 | Symptom | Cause / fix |
 |---|---|
+| Job **pending** forever, runner idle | the runner isn't enabled for this project: `auto-tester` was registered as a std_gw project runner. Settings → CI/CD → Runners → *Other available runners* → **Enable for this project** (Admin → Runners → untick "Lock to current projects" if it's not offered). Done once on 2026-10-05 |
 | Job **pending** "no runner" | job tags don't match an online runner (`sudo gitlab-runner verify`) |
+| validate: `no C compiler found` | install `gcc libc6-dev` (the job's `before_script` does), or set `$CC` |
+| validate: `firmware parser exited with 1` + an ASan/UBSan report | the firmware's parser has a memory bug on that input: fix `json.c`/`settings.c`/`data.c`, add the input as a negative case |
+| validate: `firmware reads X = …, the file means …` | see §5.3; the hint says when a key was taken from a later section |
 | No pipeline after push | workflow rules: a branch with an open MR only gets an MR pipeline (look in the MR) |
 | `E: Unable to locate package …:armhf` / `404 … ports.ubuntu.com` | mirror problem or the package was renamed: retry; check `install_toolchain.sh` |
 | `cannot find -lmodbus` locally on the host | build in Docker (§3); the host has no armhf libraries |
@@ -287,7 +384,6 @@ but disruptive; rotation makes the leaked values useless.
 
 | Step | Stage | Adds |
 |---|---|---|
-| 2 | validate | schema + rule checks for `smart_rtu_config.json` and the register CSV, negative configs, C enum ↔ tool table consistency |
 | 3 | unit-test | `unit-tool`: pytest, headless PyQt5, fake SSH/serial/MQTT transports |
 | 4 | static-analysis | `cppcheck` (baseline gate) and `doxygen` (0 warnings) |
 | 5 | unit-test | `unit-firmware`: host C tests (Unity + ASan/UBSan) of libmodbus/mosquitto-free modules |

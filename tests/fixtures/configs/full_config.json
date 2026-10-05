@@ -1,0 +1,158 @@
+{
+  "device": {
+    "device_id": "CI-GW-001",
+    "slave_id": 1,
+    "baud": 9600,
+    "parity": "None",
+    "stop_bits": 1,
+    "interval_sec": 30
+  },
+  "wifi": {
+    "ssid": "ci-test-ssid",
+    "password": "not-a-real-password",
+    "country": "IN",
+    "enable": 1
+  },
+  "modbus_tcp": {
+    "enable": 1,
+    "ip": "192.168.1.50",
+    "port": 502,
+    "slave_id": 1
+  },
+  "mqtt": {
+    "broker": "example-ats.iot.ap-south-1.amazonaws.com",
+    "port": 8883,
+    "client_id": "CI-GW-001",
+    "ca_cert": "/home/root/edb_c/linking/ca.crt",
+    "device_cert": "/home/root/edb_c/linking/client.crt",
+    "private_key": "/home/root/edb_c/linking/private.key",
+    "topic": "devices/CI-GW-001/telemetry"
+  },
+  "ota": {
+    "enable": 1,
+    "app_topic": "devices/CI-GW-001/ota/app",
+    "system_topic": "devices/CI-GW-001/ota/system",
+    "status_topic": "devices/CI-GW-001/ota/status",
+    "download_dir": "/tmp/ota",
+    "app_version": "1.0.0",
+    "app_binary_path": "/home/root/edb_c/linking/main"
+  },
+  "watchdog": {
+    "enable": 1,
+    "timeout": 60
+  },
+  "registers": [
+    {
+      "label": "S1_HOLDING_UINT16",
+      "address": 100,
+      "type": "holding",
+      "data_type": "uint16",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_HOLDING_INT32",
+      "address": 102,
+      "type": "holding",
+      "data_type": "int32",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_HOLDING_FLOAT32",
+      "address": 104,
+      "type": "holding",
+      "data_type": "float32",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_INPUT_UINT16",
+      "address": 100,
+      "type": "input",
+      "data_type": "uint16",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_INPUT_INT32",
+      "address": 102,
+      "type": "input",
+      "data_type": "int32",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_INPUT_FLOAT32",
+      "address": 104,
+      "type": "input",
+      "data_type": "float32",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_COIL_UINT16",
+      "address": 100,
+      "type": "coil",
+      "data_type": "uint16",
+      "slave_id": 1
+    },
+    {
+      "label": "S1_DISCRETE_UINT16",
+      "address": 100,
+      "type": "discrete",
+      "data_type": "uint16",
+      "slave_id": 1
+    },
+    {
+      "label": "S2_HOLDING_UINT16",
+      "address": 100,
+      "type": "holding",
+      "data_type": "uint16",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_HOLDING_INT32",
+      "address": 102,
+      "type": "holding",
+      "data_type": "int32",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_HOLDING_FLOAT32",
+      "address": 104,
+      "type": "holding",
+      "data_type": "float32",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_INPUT_UINT16",
+      "address": 100,
+      "type": "input",
+      "data_type": "uint16",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_INPUT_INT32",
+      "address": 102,
+      "type": "input",
+      "data_type": "int32",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_INPUT_FLOAT32",
+      "address": 104,
+      "type": "input",
+      "data_type": "float32",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_COIL_UINT16",
+      "address": 100,
+      "type": "coil",
+      "data_type": "uint16",
+      "slave_id": 2
+    },
+    {
+      "label": "S2_DISCRETE_UINT16",
+      "address": 100,
+      "type": "discrete",
+      "data_type": "uint16",
+      "slave_id": 2
+    }
+  ]
+}

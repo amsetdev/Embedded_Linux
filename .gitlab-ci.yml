@@ -3,7 +3,7 @@
 # stages with no jobs yet are simply skipped by GitLab.
 
 stages:
-  - validate          # step 2: config schema / rule / enum checks
+  - validate          # step 2: config schema / rules / real firmware parser  <-- active
   - static-analysis   # step 4: cppcheck baseline + Doxygen gate
   - build             # step 1: cross-compile (armhf) + compiler-warning gate  <-- active
   - unit-test         # steps 3/5: Python tool tests + host C tests
@@ -32,4 +32,5 @@ default:
     - docker
 
 include:
+  - local: .gitlab/ci/validate.yml
   - local: .gitlab/ci/build.yml
