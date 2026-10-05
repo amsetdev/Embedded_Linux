@@ -40,7 +40,12 @@ OBJS    := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 BUILD_SUBDIRS := $(BUILD_DIR)/fieldbus $(BUILD_DIR)/cloud $(BUILD_DIR)/system $(BUILD_DIR)/ui $(BUILD_DIR)/util
 
 # --- Flags ---
+# -Wall -Wextra: CI fails on any warning not in
+# tests/static/compiler-warnings-baseline.json (DOCS/CI_CD_GUIDE.md)
+WARNINGS := -Wall -Wextra
+
 CFLAGS  := -O2 \
+            $(WARNINGS) \
             -I $(INC_DIR) \
             -I include
 
