@@ -15,6 +15,7 @@ Contents
 6. [Which kind of test do I write?](#6-which-kind-of-test-do-i-write)
 7. [Regression index: bug → test](#7-regression-index-bug--test)
 8. [Desktop tool unit tests](#8-desktop-tool-unit-tests-testsunittool)
+9. [Firmware host tests (C)](#9-firmware-host-tests-c-testshost)
 
 ---
 
@@ -28,8 +29,8 @@ what only hardware can show.
 | Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 66 tests + 7 known issues |
 | Compiler warnings | `tests/static/warnings_gate.py` | `compiler-warnings` | a clean build log | seconds | 1 gate |
 | Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 121 tests + 8 known issues |
-| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (61 accepted findings; 0 doc warnings) |
-| Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | — | step 5 |
+| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (59 accepted findings; 0 doc warnings) |
+| Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | ~30 s | 6 binaries, 67 tests (9 known issues) |
 | Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
 
 `pytest` markers (`tests/pytest.ini`, `--strict-markers`) select the layers:
@@ -54,6 +55,10 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest -c tests/pytest.ini tests/unit
 
 # one config file
 python3 tests/validate/validate_config.py configs/plant_a.json
+
+# firmware C host tests (need gcc + make)
+make -C tests/host run                    # binaries in build-host/, JUnit in reports/host-tests.xml
+build-host/test_payload                   # one binary, Unity output
 
 # static gates (need cppcheck / doxygen)
 python3 tests/static/cppcheck_gate.py
@@ -112,7 +117,7 @@ comparison doesn't see the field.
 
 | Gate | Fails when | Details |
 |---|---|---|
-| `tests/static/warnings_gate.py` | the clean build log has a `-Wall -Wextra` warning not in `compiler-warnings-baseline.json` (9 accepted) | [`CI_CD_GUIDE.md` §5.2](CI_CD_GUIDE.md#52-compiler-warnings--no-new-warnings). Fixed old ones: `--update-baseline` and commit |
+| `tests/static/warnings_gate.py` | the clean build log has a `-Wall -Wextra` warning not in `compiler-warnings-baseline.json` (8 accepted) | [`CI_CD_GUIDE.md` §5.2](CI_CD_GUIDE.md#52-compiler-warnings--no-new-warnings). Fixed old ones: `--update-baseline` and commit |
 | ELF check in `build-firmware` | `build/main` is not a 32-bit ARM EABI5 hard-float executable | `.gitlab/ci/build.yml` |
 | `tests/static/cppcheck_gate.py` | cppcheck finds anything not in `cppcheck-baseline.json` | [`CI_CD_GUIDE.md` §5.5](CI_CD_GUIDE.md#55-cppcheck--static-analysis-with-a-baseline) |
 | `tests/static/doxygen_gate.py` | any doxygen warning, or the Doxyfile doesn't cover exactly the makefile's `SRCS` | [`CI_CD_GUIDE.md` §5.6](CI_CD_GUIDE.md#56-doxygen--documentation-gate) |
@@ -175,6 +180,8 @@ int data_write_register(int slave_id, RegType reg_type, uint16_t addr, uint16_t 
 | Register / data type names | all of: `inc/data.h`, `data.c`, tool tables, schema; `test_type_consistency.py` tells you what's missing |
 | The desktop tool (model, import, transports, workers, window) | `tests/unit/tool/` (§8) |
 | A delivery mode (SSH / serial / MQTT) | transport test against the matching fake, plus a worker test for what the button does |
+| Firmware logic without hardware calls (parsing, formatting, decisions, ordering) | a module in `src/` without library includes + `tests/host/` (§9) |
+| Firmware that talks to Modbus, MQTT, the file system or curl | move its decisions into such a module (ops struct for the side effects); the rest is covered by HIL (step 7) |
 | Any C code | it must build without new warnings (`compiler-warnings`) and without new cppcheck findings |
 | Any C function, struct, member, macro or global | its Doxygen comment (§4.1; the `doxygen` job fails otherwise) |
 
@@ -196,6 +203,11 @@ Open ones are strict xfails (they fail once fixed, then become regressions).
 | Serial Read returns the echoed command, not the file | open | `test_serial_transport.py::test_read_text_with_echo` |
 | Excel `INT16` imported as `int32` | open | `test_excel_import.py::test_int16_not_imported_as_int32` |
 | Offline queue overwrites same-second pushes; keeps only the CSV | open | `test_offline_queue_credentials.py` (2 tests) |
+| OTA app update installed unverified when `sha256` is missing | open | `test_ota_logic.c::test_update_without_sha256_not_installed` |
+| OTA accepts any URL scheme; long URLs cut; `\/` not decoded | open | `test_ota_logic.c` (3 tests) |
+| Telemetry `"x":nan` (invalid JSON) for NaN floats | open | `test_payload.c::test_nan_float_gives_valid_json` |
+| Offline files overwritten within one second; deleted without broker confirmation; backlog never drains | open | `test_store_forward.c` (3 tests) |
+| `json.c` doesn't unescape `\"` | open | `test_json.c::test_escaped_quote_in_value` |
 
 ---
 
@@ -233,3 +245,35 @@ real hardware, network or your keyring: see the safety notes in
 
 **Adding a test**: drive the real widget or function; answer dialogs with `dialogs`;
 for anything that talks to the board use the fakes, never a real port or host.
+
+---
+
+## 9. Firmware host tests (C, `tests/host/`)
+
+Firmware logic that doesn't need libmodbus, libmosquitto, libcurl or OpenSSL is
+compiled for the PC with Unity, AddressSanitizer and UndefinedBehaviorSanitizer.
+These tests are exact and fast, and they cover cases the board can't produce on
+demand (a broker that never confirms, a full queue, a failed rename during OTA).
+The modules and why they exist: [`CI_CD_GUIDE.md` §5.7](CI_CD_GUIDE.md#57-unit-firmware--firmware-c-unit-tests-host).
+
+| Binary | Module under test | What it checks |
+|---|---|---|
+| `test_json` | `src/util/json.c` | String/int values, whitespace and newlines, missing keys leave the value unchanged, non-string rejected, truncation to the buffer, keys matched with their quotes (`"id"` ≠ `"device_id"`), `atoi` turns `"9600"`/`true` into 0, the search continues past the object (what the config format relies on), `*_from` = plain, `read_file` (content, empty, missing). Known issue: no unescaping. |
+| `test_payload` | `src/cloud/payload.c` | Empty message; every data type (`w`, `d`, `f` with 2 decimals, `b`); failed reads left out; no stray comma; a full buffer stops adding values and stays valid. Known issue: NaN → `nan`. |
+| `test_store_forward` | `src/cloud/store_forward.c` | File named `<unix s>000.txt`; NULL / write failure; only `*.txt` are payloads; offline → nothing; oldest first, then deleted; unreadable file kept; list/remove failures reported. Known issues: same-second overwrite, deleted without broker confirmation, backlog never drains. |
+| `test_ota_logic` | `src/cloud/ota_logic.c` | App and system commands parsed (sha256 only for app); other topics / empty payload ignored; missing URL; exact status JSON; digest check (case-insensitive, wrong length); the app-update sequence step by step: happy path, download failure, SHA mismatch deletes the download, first install without a running binary, backup failure keeps the running binary, replace failure restores the backup. Known issues: no sha256 → unverified install, any URL scheme, long URL cut, `\/` not decoded. |
+| `test_msg_queue` | `src/util/msg_queue.c` | FIFO order; payload copied; full queue drops the oldest; wrap-around; invalid arguments; items still delivered after shutdown; shutdown and push wake a blocked consumer (threads); destroy frees pending items (LeakSanitizer). |
+| `test_data_read` | `src/fieldbus/data.c` (+ `settings.c`, `json.c`) with a fake fieldbus driver | uint16 reads; each table read from its own Modbus table; float32 and int32 **high word first**; signed int32; int32 above 2^24 exact; slave switched per point; retries (`MAX_RETRIES`) then success; failure marks the point invalid; no driver → invalid; register and block writes. |
+
+**Adding a test**
+
+1. The code must be in a library-free module (see `CI_CD_GUIDE.md` §7 "New firmware
+   logic you want tested"); side effects go through an ops struct so the test can fake them.
+2. `static void test_<what_must_be_true>(void)` + `RUN_TEST(...)` in `tests/host/test_<module>.c`;
+   `setUp`/`tearDown` reset the fakes.
+3. New binary: `FW_<name> := <sources>` and `<name>` in `TESTS` in `tests/host/Makefile`.
+4. A bug that isn't fixed yet: `KNOWN_ISSUE(correct_condition, "why")` from
+   `tests/host/known_issue.h` (reported as skipped; fails with "now FIXED" once it is).
+
+Everything compiles with `-Werror`; the sanitizers abort on the first error, so an
+out-of-bounds read fails the test even if the result looks right.

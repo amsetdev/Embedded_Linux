@@ -50,26 +50,6 @@ static pthread_cond_t ota_cond = PTHREAD_COND_INITIALIZER;
 static ota_request_t ota_req;
 
 /* -------------------------------------------------------------------------- */
-/* Status strings                                                             */
-/* -------------------------------------------------------------------------- */
-
-/** @brief Human-readable status names for JSON reports. */
-static const char *status_str[] = {
-    "STARTED",
-    "DOWNLOADING",
-    "VERIFYING",
-    "APPLYING",
-    "SUCCEEDED",
-    "FAILED"
-};
-
-/** @brief Human-readable type names for JSON reports. */
-static const char *type_str[] = {
-    "app",
-    "system"
-};
-
-/* -------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -88,22 +68,14 @@ static void ota_report_status(ota_type_t type,
 {
     char payload[512];
 
-    snprintf(payload, sizeof(payload),
-             "{\"type\":\"%s\",\"status\":\"%s\","
-             "\"version\":\"%s\",\"previous_version\":\"%s\","
-             "\"error\":\"%s\",\"timestamp\":%lld}",
-             type_str[type],
-             status_str[status],
-             version ? version : "",
-             cfg.app_version,
-             error ? error : "",
-             (long long)time(NULL));
+    ota_status_json(payload, sizeof(payload), type, status,
+                    version, cfg.app_version, error, (long long)time(NULL));
 
     mqtt_publish_to(cfg.ota_status_topic, payload, 1);
 
     printf("[OTA] Status: %s %s v%s %s\n",
-           type_str[type],
-           status_str[status],
+           ota_type_name(type),
+           ota_status_name(status),
            version ? version : "?",
            error ? error : "");
 }
@@ -142,17 +114,9 @@ static int verify_sha256(const char *filepath, const char *expected_hex)
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_Final(hash, &ctx);
 
-    /* Convert to hex string. */
     char hex[65];
 
-    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
-    {
-        sprintf(hex + i * 2, "%02x", hash[i]);
-    }
-
-    hex[64] = '\0';
-
-    if (strcasecmp(hex, expected_hex) != 0)
+    if (!ota_digest_matches(hash, expected_hex, hex))
     {
         fprintf(stderr, "[OTA] SHA256 mismatch: expected %s, got %s\n",
                 expected_hex, hex);
@@ -194,6 +158,92 @@ static int mkdir_p(const char *path)
 /* -------------------------------------------------------------------------- */
 
 /**
+ * @brief ota_app_ops_t.download: libcurl download (https_download_file()).
+ * @param ctx Unused.
+ * @param url Source URL.
+ * @param path Destination file.
+ * @param timeout_sec Transfer timeout.
+ * @return 1 on success, 0 on failure.
+ */
+static int app_download(void *ctx, const char *url, const char *path, long timeout_sec)
+{
+    (void)ctx;
+    return https_download_file(url, path, timeout_sec);
+}
+
+/**
+ * @brief ota_app_ops_t.verify: verify_sha256().
+ * @param ctx Unused.
+ * @param path Downloaded file.
+ * @param expected_hex Expected SHA256 (hex).
+ * @return 1 if it matches, 0 otherwise.
+ */
+static int app_verify(void *ctx, const char *path, const char *expected_hex)
+{
+    (void)ctx;
+    return verify_sha256(path, expected_hex);
+}
+
+/**
+ * @brief ota_app_ops_t.rename: rename(2).
+ * @param ctx Unused.
+ * @param from Existing path.
+ * @param to New path.
+ * @return 0, or the errno value.
+ */
+static int app_rename(void *ctx, const char *from, const char *to)
+{
+    (void)ctx;
+    return rename(from, to) == 0 ? 0 : errno;
+}
+
+/**
+ * @brief ota_app_ops_t.unlink: unlink(2).
+ * @param ctx Unused.
+ * @param path File to delete.
+ */
+static void app_unlink(void *ctx, const char *path)
+{
+    (void)ctx;
+    unlink(path);
+}
+
+/**
+ * @brief ota_app_ops_t.make_executable: chmod 0755.
+ * @param ctx Unused.
+ * @param path File.
+ */
+static void app_make_executable(void *ctx, const char *path)
+{
+    (void)ctx;
+    chmod(path, 0755);
+}
+
+/**
+ * @brief ota_app_ops_t.report: publishes the status of an application update.
+ * @param ctx Unused.
+ * @param status Status to report.
+ * @param version Target version.
+ * @param error Error code ("" if none).
+ */
+static void app_report(void *ctx, ota_status_t status, const char *version, const char *error)
+{
+    (void)ctx;
+    ota_report_status(OTA_TYPE_APP, status, version, error);
+}
+
+/** @brief The real side effects of an application update. */
+static const ota_app_ops_t app_ops = {
+    .ctx             = NULL,
+    .download        = app_download,
+    .verify          = app_verify,
+    .rename          = app_rename,
+    .unlink          = app_unlink,
+    .make_executable = app_make_executable,
+    .report          = app_report,
+};
+
+/**
  * @brief Processes an application OTA update.
  *
  * Downloads the new binary, verifies SHA256 if provided, backs up
@@ -203,76 +253,8 @@ static int mkdir_p(const char *path)
  */
 static void ota_process_app(const ota_request_t *req)
 {
-    char dl_path[512];
-
-    snprintf(dl_path, sizeof(dl_path),
-             "%s/main.new", cfg.ota_download_dir);
-
-    /* ---- Download ---- */
-
-    ota_report_status(OTA_TYPE_APP, OTA_STATUS_DOWNLOADING,
-                      req->version, "");
-
-    if (!https_download_file(req->url, dl_path, 300))
-    {
-        ota_report_status(OTA_TYPE_APP, OTA_STATUS_FAILED,
-                          req->version, "download_failed");
+    if (!ota_apply_app(&app_ops, req, cfg.ota_download_dir, cfg.app_binary_path))
         return;
-    }
-
-    /* ---- Verify SHA256 ---- */
-
-    if (req->sha256[0] != '\0')
-    {
-        ota_report_status(OTA_TYPE_APP, OTA_STATUS_VERIFYING,
-                          req->version, "");
-
-        if (!verify_sha256(dl_path, req->sha256))
-        {
-            unlink(dl_path);
-            ota_report_status(OTA_TYPE_APP, OTA_STATUS_FAILED,
-                              req->version, "sha256_mismatch");
-            return;
-        }
-    }
-
-    /* ---- Apply ---- */
-
-    ota_report_status(OTA_TYPE_APP, OTA_STATUS_APPLYING,
-                      req->version, "");
-
-    /* Backup current binary. */
-    char bak_path[512];
-    snprintf(bak_path, sizeof(bak_path),
-             "%s.bak", cfg.app_binary_path);
-
-    if (rename(cfg.app_binary_path, bak_path) != 0 && errno != ENOENT)
-    {
-        fprintf(stderr, "[OTA] Backup failed: %s\n", strerror(errno));
-        unlink(dl_path);
-        ota_report_status(OTA_TYPE_APP, OTA_STATUS_FAILED,
-                          req->version, "backup_failed");
-        return;
-    }
-
-    /* Move new binary into place. */
-    if (rename(dl_path, cfg.app_binary_path) != 0)
-    {
-        fprintf(stderr, "[OTA] Replace failed: %s\n", strerror(errno));
-
-        /* Restore backup. */
-        rename(bak_path, cfg.app_binary_path);
-
-        ota_report_status(OTA_TYPE_APP, OTA_STATUS_FAILED,
-                          req->version, "replace_failed");
-        return;
-    }
-
-    /* Set executable permission. */
-    chmod(cfg.app_binary_path, 0755);
-
-    ota_report_status(OTA_TYPE_APP, OTA_STATUS_SUCCEEDED,
-                      req->version, "");
 
     printf("[OTA] App update applied. Restarting...\n");
 
@@ -455,22 +437,13 @@ void ota_on_message(struct mosquitto *m,
     if (!msg || !msg->topic || !msg->payload || msg->payloadlen == 0)
         return;
 
-    /* Determine OTA type from topic. */
-    ota_type_t type;
+    ota_request_t req;
 
-    if (strcmp(msg->topic, cfg.ota_app_topic) == 0)
-    {
-        type = OTA_TYPE_APP;
-    }
-    else if (strcmp(msg->topic, cfg.ota_system_topic) == 0)
-    {
-        type = OTA_TYPE_SYSTEM;
-    }
-    else
-    {
-        /* Not an OTA topic — ignore. */
-        return;
-    }
+    ota_parse_result_t parsed = ota_parse_request(msg->topic, (const char *)msg->payload,
+                                                  cfg.ota_app_topic, cfg.ota_system_topic,
+                                                  &req);
+    if (parsed == OTA_REQ_NOT_OTA)
+        return;   /* Not an OTA topic — ignore. */
 
     /* Reject if an update is already in progress. */
     pthread_mutex_lock(&ota_mutex);
@@ -482,39 +455,22 @@ void ota_on_message(struct mosquitto *m,
         return;
     }
 
-    /* Parse JSON payload. */
-    const char *json = (const char *)msg->payload;
-
-    memset(&ota_req, 0, sizeof(ota_req));
-    ota_req.type = type;
-
-    json_get_string(json, "url",
-                    ota_req.url, sizeof(ota_req.url));
-
-    json_get_string(json, "version",
-                    ota_req.version, sizeof(ota_req.version));
-
-    if (type == OTA_TYPE_APP)
-    {
-        json_get_string(json, "sha256",
-                        ota_req.sha256, sizeof(ota_req.sha256));
-    }
-
     /* Validate required fields. */
-    if (ota_req.url[0] == '\0')
+    if (parsed == OTA_REQ_MISSING_URL)
     {
         pthread_mutex_unlock(&ota_mutex);
         printf("[OTA] Missing URL in OTA command — ignoring\n");
         return;
     }
 
+    ota_req = req;
     ota_req.pending = 1;
 
     pthread_cond_signal(&ota_cond);
     pthread_mutex_unlock(&ota_mutex);
 
     printf("[OTA] Queued %s update v%s\n",
-           type_str[type], ota_req.version);
+           ota_type_name(req.type), req.version);
 }
 
 /* -------------------------------------------------------------------------- */

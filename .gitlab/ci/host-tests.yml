@@ -1,0 +1,28 @@
+# Host-side C unit tests — DOCS/CI_CD_GUIDE.md §5.7
+#
+# Compiles the firmware's own libmodbus/mosquitto/curl/OpenSSL-free sources
+# (src/util/json.c, msg_queue.c, src/cloud/payload.c, store_forward.c,
+# ota_logic.c, src/fieldbus/data.c with a fake fieldbus driver) for x86 with
+# native gcc, Unity (vendored in tests/host/unity) and ASan + UBSan, and runs them.
+#
+# KNOWN_ISSUE tests (tests/host/known_issue.h) show as skipped while the bug
+# exists and FAIL once it is fixed, as a reminder to make them real assertions.
+
+unit-firmware:
+  stage: unit-test
+  image: python:3.11-slim
+  needs: []
+  timeout: 15m
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends gcc libc6-dev make > /dev/null
+    - gcc --version | head -1
+  script:
+    - make -C tests/host run
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: reports/host-tests.xml
+    paths:
+      - reports/host-tests.xml

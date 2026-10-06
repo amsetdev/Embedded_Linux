@@ -16,12 +16,12 @@ to a cross-compiled Linux application on a Cortex-A7.
 ```
 stage:  validate           static-analysis   build                      unit-test    hardware-test   release
         ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
-        validate-configs   cppcheck          build-firmware ──►         unit-tool    (step 7)        (step 6)
-                           doxygen           compiler-warnings          (step 5)
+        validate-configs   cppcheck          build-firmware ──►         unit-tool      (step 7)      (step 6)
+                           doxygen           compiler-warnings          unit-firmware
 ```
 
-* `validate-configs`, `cppcheck`, `doxygen` and `unit-tool` (`needs: []`) start
-  immediately and run in parallel. `build-firmware` waits for the `validate` and
+* `validate-configs`, `cppcheck`, `doxygen`, `unit-tool` and `unit-firmware`
+  (`needs: []`) start immediately and run in parallel. `build-firmware` waits for the `validate` and
   `static-analysis` stages, so a bad config, a new cppcheck finding or an
   undocumented function stops the build.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
@@ -51,6 +51,8 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `.gitlab/ci/static-analysis.yml` | `cppcheck`, `doxygen` |
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
 | `.gitlab/ci/unit-tests.yml` | `unit-tool` |
+| `.gitlab/ci/host-tests.yml` | `unit-firmware` |
+| `tests/host/` | firmware C tests: `Makefile`, `test_*.c`, `known_issue.h`, `run_tests.py` (Unity → JUnit), `unity/` (Unity 2.6.0, MIT, vendored) |
 | `tests/unit/tool/` | desktop tool tests (headless PyQt5), fakes for board/console/broker in `fakes.py` |
 | `tools/ci/install_toolchain.sh` | **the** package list: armhf cross gcc + armhf libmodbus/mosquitto/sqlite3/ssl/curl/zlib. Used by CI and by the `Dockerfile` |
 | `tools/ci/build_info.py` | writes `build/build_info.json` |
@@ -60,10 +62,10 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `tests/fixtures/configs/` | known-good test config (`full_config.json`) |
 | `configs/` | real device configs, one per device (validated automatically; none yet) |
 | `tests/static/warnings_gate.py` | compiler-warning gate |
-| `tests/static/cppcheck_gate.py`, `cppcheck-baseline.json` | cppcheck gate + the 61 accepted findings |
+| `tests/static/cppcheck_gate.py`, `cppcheck-baseline.json` | cppcheck gate + the accepted findings (59) |
 | `tests/static/doxygen_gate.py`, `Doxyfile`, `DOCS/DOXYGEN_MAINPAGE.md` | Doxygen gate, its config (non-default settings only) and start page |
 | `tests/static/srcs.py` | reads `SRCS` from the makefile: the static gates check exactly what is built |
-| `tests/static/compiler-warnings-baseline.json` | warnings accepted when the gate was added (9) |
+| `tests/static/compiler-warnings-baseline.json` | warnings accepted (8 left) |
 | `Dockerfile` | local build environment (same packages via `install_toolchain.sh`) |
 | `makefile` | build (`all`), `-Wall -Wextra` in `WARNINGS`, deploy targets |
 | `scripts/collect-libs.sh` | copies every non-libc runtime `.so` the binary needs into `build/lib/` |
@@ -118,6 +120,7 @@ Run from the repo root.
 | validate-configs | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev >/dev/null && pip install -q -r tests/requirements.txt && python -m pytest -c tests/pytest.ini tests/validate -p no:cacheprovider"` |
 | one config only | same, with `python tests/validate/validate_config.py configs/<file>.json` as the last command |
 | unit-tool | see §5.4 |
+| unit-firmware | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev make >/dev/null && make -C tests/host run"` (or on a PC with gcc: `make -C tests/host run`) |
 | cppcheck | `docker run --rm -v "$PWD":/src --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq cppcheck >/dev/null && python tests/static/cppcheck_gate.py"` (or `sudo apt install cppcheck`; CI uses 2.17) |
 | doxygen | `docker run --rm -v "$PWD":/src -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq doxygen >/dev/null && python tests/static/doxygen_gate.py"` → `build-docs/html/index.html` (CI uses 1.9.8) |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
@@ -138,7 +141,8 @@ local image and CI stay identical only if you do.
 ## 4. Reading results in GitLab
 
 * **Pipeline page → job → log**: full output; the last lines say why it failed.
-* **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs` and `unit-tool`.
+* **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs`, `unit-tool`
+  and `unit-firmware`. Known issues show as *skipped*.
   Known issues show as *skipped* (xfail).
 * **Merge request → Code Quality widget**: new compiler warnings and cppcheck findings.
 * **`doxygen` job → Browse artifacts → `build-docs/html/index.html`**: the API documentation.
@@ -174,7 +178,7 @@ the board** (`/home/root/edb_c/linking/{client.crt,private.key,ca.crt}`, paths i
 `smart_rtu_config.json`); nothing is compiled in. Unlike `std_gw`, CI never needs
 the device identity to build.
 
-**Built sources**: the 18 files in `SRCS` in the `makefile`.
+**Built sources**: the 21 files in `SRCS` in the `makefile`.
 `src/fieldbus/modbus.c` and `src/control_logic.c` are **not built** and are
 excluded from all checks (they stay in the repo for reference).
 
@@ -191,15 +195,15 @@ time (`cannot find -lfoo`) → add `libfoo-dev:armhf` to `install_toolchain.sh`
 
 ### 5.2 `compiler-warnings` — no new warnings
 
-The makefile compiles with `-Wall -Wextra` (`WARNINGS` variable). The 9 warnings
-that existed when the gate was added are in
+The makefile compiles with `-Wall -Wextra` (`WARNINGS` variable). The warnings
+that existed when the gate was added (9; 8 left) are in
 `tests/static/compiler-warnings-baseline.json`:
 
 | Where | Warning |
 |---|---|
 | `src/cloud/ota.c` `verify_sha256` | `SHA256_Init/Update/Final` deprecated since OpenSSL 3.0 (move to the `EVP_Digest*` API) |
 | `src/cloud/ota.c` `ota_process_system` | return value of `system()` ignored |
-| `src/main.c` `main` (×3), `src/fieldbus/mb_tcp.c` `mb_thread_func1`, `src/cloud/storage.c` `replay_worker` | `-Wstringop-truncation`: `strncpy(dst, src, sizeof dst - 1)` where `src` is as long as `dst` |
+| `src/main.c` `main` (×3), `src/fieldbus/mb_tcp.c` `mb_thread_func1` | `-Wstringop-truncation`: `strncpy(dst, src, sizeof dst - 1)` where `src` is as long as `dst` |
 
 The job **fails only when a change adds a warning**. Warnings are matched by
 file + function + flag + message, **not line number**, so editing code above an
@@ -335,15 +339,15 @@ queue lives in a temp directory.
 ### 5.5 `cppcheck` — static analysis with a baseline
 
 **Checks**: cppcheck 2.17 (`--enable=warning,style,performance,portability`,
-exhaustive, 32-bit platform) on the 18 files in the makefile's `SRCS`. The 61
-findings that existed when the job was added are in
-`tests/static/cppcheck-baseline.json` (39 unused struct members, 16 could-be-const
+exhaustive, 32-bit platform) on the files in the makefile's `SRCS` (21). The
+findings that existed when the job was added (61; 59 left) are in
+`tests/static/cppcheck-baseline.json` (39 unused struct members, 14 could-be-const
 pointers, 2 `%d` for unsigned in `display.c`, 2 shadowed `cfg`, …). The job **fails
 only on new findings**, matched by file + check id + message (not line number).
 
 **Reading a failure** (example)
 ```
-cppcheck: 62 findings, baseline 61, new 1, fixed 0
+cppcheck: 60 findings, baseline 59, new 1, fixed 0
 NEW findings (fix them, or add '// cppcheck-suppress <id>' with a reason):
   src/cloud/mqtt.c:120: warning: nullPointerRedundantCheck: Either the condition 'mosq' is redundant or there is possible null pointer dereference: mosq.
 ```
@@ -379,6 +383,41 @@ documented **in the header only**; a second `/** … */` block on the definition
 `<word>` in a comment is read as an HTML tag: write `\<word\>`. A file that becomes
 built (added to `SRCS`) must be removed from `EXCLUDE`; the gate tells you.
 
+### 5.7 `unit-firmware` — firmware C unit tests (host)
+
+**How it works**: logic that doesn't need libmodbus, libmosquitto, libcurl or OpenSSL
+lives in files that also compile on a PC. `tests/host/Makefile` compiles **the same
+source files** with native gcc, `-Wall -Wextra -Werror`, Unity and
+**AddressSanitizer + UndefinedBehaviorSanitizer** (leak checking on), and
+`run_tests.py` turns the Unity output into JUnit.
+
+| File | Logic | Used by |
+|---|---|---|
+| `src/util/json.c` | the config/command JSON reader | `settings.c`, `data.c`, `ota_logic.c` |
+| `src/util/msg_queue.c` | bounded queue Modbus thread → MQTT publisher | `main.c` |
+| `src/cloud/payload.c` | the telemetry JSON (`payload_build()`) | `mqtt.c` (`build_payload()`) |
+| `src/cloud/store_forward.c` | offline file naming, oldest-first replay (`sf_ops_t`) | `storage.c` |
+| `src/cloud/ota_logic.c` | OTA command parsing, status JSON, digest check, app-update sequence (`ota_app_ops_t`) | `ota.c` |
+| `src/fieldbus/data.c` | register reads through the fieldbus driver interface (fake driver in the test) | `main.c` |
+
+`payload.c`, `store_forward.c` and `ota_logic.c` were moved out of `mqtt.c`,
+`storage.c` and `ota.c` with unchanged behaviour (step 5); the callers pass the real
+file system, MQTT and download functions as function pointers.
+
+**Rule**: these files must not include `<modbus.h>`, `<mosquitto.h>`, `<curl/curl.h>`
+or OpenSSL headers. Logging with `printf` is fine.
+
+**Reading a failure**
+```
+/src/tests/host/test_payload.c:41:test_every_data_type:FAIL: Expected '…"F32":12.35…' Was '…"F32":12.34…'
+```
+An ASan report (`ERROR: AddressSanitizer: heap-buffer-overflow … in payload_build`) or a
+UBSan `runtime error:` means a real memory/UB bug; the job shows it as an *error* with the
+stack trace. A test that says `Known issue now FIXED` needs its `KNOWN_ISSUE` turned into a
+normal assertion (§6).
+
+**Adding a test**: see `TESTS_GUIDE.md` §9.
+
 ---
 
 ## 6. Known issues
@@ -397,9 +436,15 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 | **Serial delivery doesn't work on a real console**: the JSON has no trailing newline, so the heredoc never ends and `smart_rtu_config.json` is not written; and because the console echoes the typed command (which contains the completion marker), failures are reported as success and Read returns the echoed command | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success`, `::test_read_text_with_echo` |
 | Excel import turns any data type containing "int" into `int32`: vendor `INT16` registers are read as 2 registers | `test_excel_import.py::test_int16_not_imported_as_int32` (3 cases) |
 | Offline queue: a second push in the same second overwrites the first; the queue keeps and re-sends only the CSV, the firmware reads the JSON | `test_offline_queue_credentials.py::test_two_pushes_in_one_second_both_kept`, `::test_queued_entry_keeps_the_json_the_firmware_reads` |
+| **OTA: an app command without `sha256` installs the download unverified**; any URL scheme is accepted (libcurl also does `file://`, `http://`); URLs > 511 characters (long S3 pre-signed URLs) are cut; JSON escapes (`\/`) aren't decoded | `test_ota_logic.c`: `test_update_without_sha256_not_installed`, `test_non_https_url_rejected`, `test_long_presigned_url_not_truncated`, `test_escaped_slashes_in_url` |
+| A float register holding NaN/Inf makes the telemetry message invalid JSON (`"x":nan`) | `test_payload.c::test_nan_float_gives_valid_json` |
+| Offline storage: files are named with 1 s resolution (a second payload in the same second overwrites the first); a replayed file is deleted without broker confirmation (failed publishes are re-stored as the newest file, so order is lost); one file is sent per 60 s, slower than a 30 s poll interval produces them, so a backlog never drains | `test_store_forward.c`: `test_two_stores_in_one_second_both_kept`, `test_file_kept_when_publish_fails`, `test_backlog_drains` |
+| `json.c` doesn't unescape strings (`\"`) | `test_json.c::test_escaped_quote_in_value` (config strings with `"`/`\` are rejected by validate) |
+| `data.c` converts a float register to `int` with `(int)fval`: undefined behaviour for NaN/Inf/huge values (saturates on ARM in practice) | no test (UBSan would abort the run); fix together with the NaN payload issue |
+| `inc/storage.h` describes an SQLite database (`MQTT_STORAGE_DB`); storage actually uses one file per payload in `/home/root/edb_c/linking/storage` | documentation only |
 | `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`) | change it on that network, and make the defaults empty |
 | The AWS IoT key (`private.key`) and the board password (`.env`) are still in **git history**, and the project is **public** on this GitLab | removed from the tree (§9). Rotate both; consider making the project private |
-| 9 compiler warnings | baseline (§5.2) |
+| 8 compiler warnings | baseline (§5.2) |
 
 ---
 
@@ -423,6 +468,14 @@ Rebuild your local image.
 3. Schema enums; `REG_TYPE_CODE`/`DATA_TYPE_CODE`/`REGISTER_WIDTH` in `config_checks.py`.
 4. `test_type_consistency.py` fails until 1–3 agree. Add the type to `full_config.json`.
 
+**New firmware logic you want tested**
+1. Put the decision logic in a file without libmodbus/mosquitto/curl/OpenSSL includes
+   (pass hardware access in as function pointers, like `sf_ops_t` / `ota_app_ops_t`),
+   add it to `SRCS` in the `makefile` and document it (Doxygen).
+2. Write `tests/host/test_<name>.c` and add `FW_<name> := …` plus `<name>` in `TESTS` in
+   `tests/host/Makefile`.
+3. Mention the file in the table in §5.7 and in `CLAUDE.md`.
+
 **New CI job**
 * `tags: [docker]` comes from `default:`; never use `hardware` (ESP32 rig).
 * Use `needs: []` if it doesn't need build artifacts, so it starts immediately.
@@ -443,6 +496,9 @@ Rebuild your local image.
 | cppcheck job fails after a refactor | moved code can produce a "new" finding plus a "fixed" one: fix it, then `--update-baseline` |
 | doxygen: `Doxyfile does not match the makefile` | a file was added to / removed from `SRCS`: update `INPUT`/`EXCLUDE` (§5.6) |
 | doxygen: `has multiple @param documentation sections` | the function is documented in the header **and** at the definition: make the definition's comment a plain `/* */` |
+| unit-firmware: `ERROR: AddressSanitizer` / `runtime error:` | a real memory or undefined-behaviour bug in the code under test (or in the test) — read the stack trace |
+| unit-firmware: `ERROR: LeakSanitizer: detected memory leaks` | something isn't freed; LeakSanitizer needs ptrace, which the Docker executor allows |
+| unit-firmware: `fatal error: modbus.h: No such file` | the file under test includes a target-only library; move that code out (§5.7 rule) |
 | validate: `no C compiler found` | install `gcc libc6-dev` (the job's `before_script` does), or set `$CC` |
 | validate: `firmware parser exited with 1` + an ASan/UBSan report | the firmware's parser has a memory bug on that input: fix `json.c`/`settings.c`/`data.c`, add the input as a negative case |
 | validate: `firmware reads X = …, the file means …` | see §5.3; the hint says when a key was taken from a later section |
@@ -495,6 +551,5 @@ but disruptive; rotation makes the leaked values useless.
 
 | Step | Stage | Adds |
 |---|---|---|
-| 5 | unit-test | `unit-firmware`: host C tests (Unity + ASan/UBSan) of libmodbus/mosquitto-free modules |
 | 6 | release | tag `v<APP_VERSION_DEF>`, binary + libs + `SHA256SUMS` |
 | 7 | hardware-test | dedicated DK2 over SSH (runner tag `stm32-hil`): Modbus TCP + RTU slaves, AWS IoT observer, SIGHUP reload, store-and-forward, crash detection |

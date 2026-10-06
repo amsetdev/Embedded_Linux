@@ -3,7 +3,6 @@
   "src/cloud/ota.c|verify_sha256|-Wdeprecated-declarations|'SHA256_Final' is deprecated: Since OpenSSL 3.0": 1,
   "src/cloud/ota.c|verify_sha256|-Wdeprecated-declarations|'SHA256_Init' is deprecated: Since OpenSSL 3.0": 1,
   "src/cloud/ota.c|verify_sha256|-Wdeprecated-declarations|'SHA256_Update' is deprecated: Since OpenSSL 3.0": 1,
-  "src/cloud/storage.c|replay_worker|-Wstringop-truncation|'__builtin_strncpy' output may be truncated copying 255 bytes from a string of length 255": 1,
   "src/fieldbus/mb_tcp.c|mb_thread_func1|-Wstringop-truncation|'__builtin_strncpy' output may be truncated copying 63 bytes from a string of length 63": 1,
   "src/main.c|main|-Wstringop-truncation|'__builtin_strncpy' output may be truncated copying 15 bytes from a string of length 15": 1,
   "src/main.c|main|-Wstringop-truncation|'__builtin_strncpy' output may be truncated copying 63 bytes from a string of length 63": 2

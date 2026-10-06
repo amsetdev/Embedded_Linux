@@ -3,7 +3,7 @@
 # Both jobs check exactly the C files the makefile builds (SRCS, read by
 # tests/static/srcs.py); src/fieldbus/modbus.c and src/control_logic.c are not built.
 
-# cppcheck with a baseline: the 61 findings that existed when this job was added are
+# cppcheck with a baseline: the findings that existed when this job was added (59 left) are
 # in tests/static/cppcheck-baseline.json; the job fails only when a change ADDS one.
 # Fixed old ones: `python3 tests/static/cppcheck_gate.py --update-baseline` and commit.
 # Findings appear in the merge request's Code Quality widget.

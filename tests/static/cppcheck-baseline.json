@@ -1,7 +1,5 @@
 {
   "src/cloud/https.c|constParameterCallback|Parameter 'ptr' can be declared as pointer to const. However it seems that 'write_file_cb' is a callback function, if 'ptr' is declared with const you might also need to cast function pointer(s).": 1,
-  "src/cloud/mqtt.c|constVariablePointer|Variable 'points' can be declared as pointer to const": 1,
-  "src/cloud/storage.c|constVariablePointer|Variable 'entry' can be declared as pointer to const": 1,
   "src/fieldbus/data.c|constVariablePointer|Variable 'p' can be declared as pointer to const": 1,
   "src/fieldbus/mb_tcp.c|constVariablePointer|Variable 'args' can be declared as pointer to const": 1,
   "src/main.c|constVariablePointer|Variable 'pts' can be declared as pointer to const": 1,

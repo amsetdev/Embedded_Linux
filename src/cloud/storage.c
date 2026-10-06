@@ -16,6 +16,7 @@
  */
 
 #include "storage.h"
+#include "store_forward.h"
 #include "mqtt.h"
 #include "connection.h"
 
@@ -70,6 +71,165 @@ int offline_init(void)
     return 1;
 }
 
+/* -------------------------------------------------------------------------- */
+/* sf_ops_t on STORAGE_DIR and MQTT                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * @brief sf_ops_t.connected: MQTT connected and internet reachable.
+ * @param ctx Unused.
+ * @return 1 when online, 0 otherwise.
+ */
+static int fs_connected(void *ctx)
+{
+    (void)ctx;
+    return atomic_load(&mqtt_connected) && atomic_load(&internet_up);
+}
+
+/**
+ * @brief sf_ops_t.list: every entry of STORAGE_DIR.
+ * @param ctx Unused.
+ * @param each Called with each entry name.
+ * @param each_ctx Passed to each.
+ * @return 0, or -1 if STORAGE_DIR can't be opened.
+ */
+static int fs_list(void *ctx, void (*each)(const char *name, void *each_ctx), void *each_ctx)
+{
+    (void)ctx;
+    DIR *dir = opendir(STORAGE_DIR);
+
+    if (!dir)
+    {
+        fprintf(stderr, "[SD_CARD] opendir: %s\n", strerror(errno));
+        return -1;
+    }
+
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL)
+        each(entry->d_name, each_ctx);
+
+    closedir(dir);
+    return 0;
+}
+
+/**
+ * @brief sf_ops_t.read: whole file from STORAGE_DIR.
+ * @param ctx Unused.
+ * @param name File name in STORAGE_DIR.
+ * @return malloc()ed NUL-terminated content, NULL on failure.
+ */
+static char *fs_read(void *ctx, const char *name)
+{
+    (void)ctx;
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+
+    FILE *f = fopen(path, "r");
+
+    if (!f)
+    {
+        fprintf(stderr, "[SD_CARD] fopen %s: %s\n", path, strerror(errno));
+        return NULL;
+    }
+
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    rewind(f);
+
+    char *buf = malloc(sz + 1);
+
+    if (!buf)
+    {
+        fclose(f);
+        return NULL;
+    }
+
+    if (fread(buf, 1, sz, f) != (size_t)sz)
+    {
+        fprintf(stderr, "[SD_CARD] fread short read: %s\n", name);
+        free(buf);
+        fclose(f);
+        return NULL;
+    }
+
+    buf[sz] = '\0';
+    fclose(f);
+
+    printf("[SD_CARD] Uploading %s\n", name);
+    return buf;
+}
+
+/**
+ * @brief sf_ops_t.write: new file in STORAGE_DIR.
+ * @param ctx Unused.
+ * @param name File name in STORAGE_DIR.
+ * @param payload Content.
+ * @return 0 on success, -1 on failure.
+ */
+static int fs_write(void *ctx, const char *name, const char *payload)
+{
+    (void)ctx;
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+
+    FILE *f = fopen(path, "w");
+
+    if (!f)
+    {
+        fprintf(stderr, "[SD_CARD] fopen %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    fprintf(f, "%s", payload);
+    fclose(f);
+
+    printf("[SD_CARD] Stored → %s\n", path);
+    return 0;
+}
+
+/**
+ * @brief sf_ops_t.publish: mqtt_publish() (stores the payload again if it fails).
+ * @param ctx Unused.
+ * @param payload Payload to publish.
+ */
+static void fs_publish(void *ctx, const char *payload)
+{
+    (void)ctx;
+    mqtt_publish(payload);
+}
+
+/**
+ * @brief sf_ops_t.remove: delete a file from STORAGE_DIR.
+ * @param ctx Unused.
+ * @param name File name in STORAGE_DIR.
+ * @return 0 on success, -1 on failure.
+ */
+static int fs_remove(void *ctx, const char *name)
+{
+    (void)ctx;
+    char path[MAX_PATH];
+    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+
+    if (remove(path) != 0)
+    {
+        fprintf(stderr, "[SD_CARD] remove %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+/** @brief The real storage (STORAGE_DIR) and network operations. */
+static const sf_ops_t fs_ops = {
+    .ctx       = NULL,
+    .connected = fs_connected,
+    .list      = fs_list,
+    .read      = fs_read,
+    .write     = fs_write,
+    .publish   = fs_publish,
+    .remove    = fs_remove,
+};
+
 /*
  * @brief Stores an MQTT payload for later transmission.
  *
@@ -80,43 +240,16 @@ int offline_init(void)
  */
 void offline_store(const char *payload)
 {
-    if (!payload)
-        return;
-
-    long long ms = (long long)time(NULL) * 1000;
-
-    char path[MAX_PATH];
-
-    snprintf(path,
-             sizeof(path),
-             "%s/%lld.txt",
-             STORAGE_DIR,
-             ms);
-
-    FILE *f = fopen(path, "w");
-
-    if (!f)
-    {
-        fprintf(stderr,
-                "[SD_CARD] fopen %s: %s\n",
-                path,
-                strerror(errno));
-        return;
-    }
-
-    fprintf(f, "%s", payload);
-
-    fclose(f);
-
-    printf("[SD_CARD] Stored → %s\n", path);
+    char name[SF_NAME_MAX];
+    sf_store(&fs_ops, payload, time(NULL), name);
 }
 
 /**
  * @brief Offline replay worker thread.
  *
- * Periodically scans the storage directory for pending payloads.
- * When MQTT and internet connectivity are available, the oldest
- * stored payload is published and removed from storage.
+ * Every REPLAY_INTERVAL_SEC, when MQTT and internet connectivity are
+ * available, the oldest stored payload is published and removed from
+ * storage (sf_replay_once()).
  *
  * @param arg Unused thread argument.
  *
@@ -130,111 +263,23 @@ static void *replay_worker(void *arg)
     {
         sleep(REPLAY_INTERVAL_SEC);
 
-        if (!atomic_load(&mqtt_connected) || !atomic_load(&internet_up))
+        char name[SF_NAME_MAX];
+
+        switch (sf_replay_once(&fs_ops, name))
         {
+        case SF_NOT_CONNECTED:
             printf("[SD_CARD] Not connected - replay skipped\n");
-            continue;
-        }
-
-        DIR *dir = opendir(STORAGE_DIR);
-
-        if (!dir)
-        {
-            fprintf(stderr,
-                    "[SD_CARD] opendir: %s\n",
-                    strerror(errno));
-            continue;
-        }
-
-        char oldest_name[MAX_PATH] = {0};
-        struct dirent *entry;
-
-        while ((entry = readdir(dir)) != NULL)
-        {
-            const char *dot = strrchr(entry->d_name, '.');
-
-            if (!dot || strcmp(dot, ".txt") != 0)
-                continue;
-
-            if (oldest_name[0] == '\0' ||
-                strcmp(entry->d_name, oldest_name) < 0)
-            {
-                strncpy(oldest_name,
-                        entry->d_name,
-                        sizeof(oldest_name) - 1);
-            }
-        }
-
-        closedir(dir);
-
-        if (oldest_name[0] == '\0')
-        {
+            break;
+        case SF_NOTHING_PENDING:
             printf("[SD_CARD] No pending files\n");
-            continue;
-        }
-
-        char path[MAX_PATH];
-
-        snprintf(path,
-                 sizeof(path),
-                 "%s/%s",
-                 STORAGE_DIR,
-                 oldest_name);
-
-        FILE *f = fopen(path, "r");
-
-        if (!f)
-        {
-            fprintf(stderr,
-                    "[SD_CARD] fopen %s: %s\n",
-                    path,
-                    strerror(errno));
-            continue;
-        }
-
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        rewind(f);
-
-        char *buf = malloc(sz + 1);
-
-        if (!buf)
-        {
-            fclose(f);
-            continue;
-        }
-
-        if (fread(buf, 1, sz, f) != (size_t)sz)
-        {
-            fprintf(stderr,
-                    "[SD_CARD] fread short read: %s\n",
-                    oldest_name);
-
-            free(buf);
-            fclose(f);
-            continue;
-        }
-
-        buf[sz] = '\0';
-
-        fclose(f);
-
-        printf("[SD_CARD] Uploading %s\n", oldest_name);
-
-        mqtt_publish(buf);
-
-        free(buf);
-
-        if (remove(path) != 0)
-        {
-            fprintf(stderr,
-                    "[SD_CARD] remove %s: %s\n",
-                    path,
-                    strerror(errno));
-        }
-        else
-        {
-            printf("[SD_CARD] Deleted %s\n", oldest_name);
+            break;
+        case SF_SENT:
+            printf("[SD_CARD] Deleted %s\n", name);
+            break;
+        case SF_LIST_FAILED:
+        case SF_READ_FAILED:
+        case SF_SENT_NOT_REMOVED:
+            break;   /* already logged by the operation */
         }
     }
 

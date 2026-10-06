@@ -24,6 +24,9 @@ SRCS    := $(SRC_DIR)/main.c                    \
            $(SRC_DIR)/cloud/https.c              \
            $(SRC_DIR)/cloud/storage.c            \
            $(SRC_DIR)/cloud/ota.c                \
+           $(SRC_DIR)/cloud/ota_logic.c          \
+           $(SRC_DIR)/cloud/payload.c            \
+           $(SRC_DIR)/cloud/store_forward.c      \
            $(SRC_DIR)/system/connection.c        \
            $(SRC_DIR)/system/wifi.c              \
            $(SRC_DIR)/system/rtc.c               \

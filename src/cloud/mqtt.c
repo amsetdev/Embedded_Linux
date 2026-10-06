@@ -9,6 +9,7 @@
  */
 
 #include "mqtt.h"
+#include "payload.h"
 #include "settings.h"
 #include "data.h"
 #include "storage.h"
@@ -242,53 +243,8 @@ int mqtt_init(void)
  */
 void build_payload(char *buf, size_t buflen)
 {
-    long long ts = (long long)time(NULL) * 1000;
-
-    int pos = snprintf(buf, buflen, "{\"ts\":%lld,\"values\":{", ts);
-    int first = 1;
-
-    ModbusPoint *points = data_get_points();
-    int count = data_get_count();
-
-    for (int i = 0; i < count && pos < (int)buflen - 128; i++) {
-
-        if (!points[i].valid)
-            continue;
-
-        if (!first)
-            buf[pos++] = ',';
-
-        switch (points[i].data_type)
-        {
-        case 'b':
-            pos += snprintf(buf + pos,
-                            buflen - pos,
-                            "\"%s\":%s",
-                            points[i].label,
-                            points[i].value ? "true" : "false");
-            break;
-
-        case 'f':
-            pos += snprintf(buf + pos,
-                            buflen - pos,
-                            "\"%s\":%.2f",
-                            points[i].label,
-                            points[i].float_value);
-            break;
-
-        default:
-            pos += snprintf(buf + pos,
-                            buflen - pos,
-                            "\"%s\":%d",
-                            points[i].label,
-                            points[i].value);
-            break;
-        }
-
-        first = 0;
-    }
-
-    snprintf(buf + pos, buflen - pos, "}}");
+    payload_build(buf, buflen, (long long)time(NULL) * 1000,
+                  data_get_points(), data_get_count());
 }
 
 /*
