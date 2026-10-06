@@ -122,3 +122,15 @@ def test_csv_export_matches_json():
     assert header == ["slave_id", "label", "address", "type", "data_type"]
     assert rows == [[str(r.get("slave_id", 0)), r["label"], str(r["address"]), r["type"], r["data_type"]]
                     for r in d["registers"]]
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Known issue: the tool's MQTT delivery mode publishes the config to amset/<device_id>/config/set "
+    "(core/mqtt_transport.py), but the firmware only subscribes to its OTA topics (src/cloud/mqtt.c): "
+    "MQTT 'Push' always times out and queues. See tools/smart_rtu_tool/FIRMWARE_NOTES.md"))
+def test_firmware_subscribes_to_tool_config_topic():
+    import re
+    from conftest import REPO
+    mqtt_c = (REPO / "src/cloud/mqtt.c").read_text()
+    subscribed = re.findall(r"mosquitto_subscribe\([^,]+,[^,]+,\s*([^,]+),", mqtt_c)
+    assert any("config" in s for s in subscribed), f"firmware subscribes only to: {subscribed}"

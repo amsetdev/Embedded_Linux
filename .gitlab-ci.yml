@@ -34,3 +34,4 @@ default:
 include:
   - local: .gitlab/ci/validate.yml
   - local: .gitlab/ci/build.yml
+  - local: .gitlab/ci/unit-tests.yml

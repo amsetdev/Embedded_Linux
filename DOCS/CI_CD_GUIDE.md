@@ -16,11 +16,11 @@ to a cross-compiled Linux application on a Cortex-A7.
 ```
 stage:  validate           static-analysis   build                      unit-test    hardware-test   release
         ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
-        validate-configs   (step 4)          build-firmware ──►         (steps 3/5)  (step 7)        (step 6)
-                                             compiler-warnings
+        validate-configs   (step 4)          build-firmware ──►         unit-tool    (step 7)        (step 6)
+                                             compiler-warnings          (step 5)
 ```
 
-* `validate-configs` (`needs: []`) starts immediately and takes seconds.
+* `validate-configs` and `unit-tool` (`needs: []`) start immediately and take seconds.
   `build-firmware` waits for the `validate` stage, so a bad config stops the build.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
   collects the runtime libraries into `build/lib/`.
@@ -47,6 +47,8 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `.gitlab-ci.yml` | stages, workflow rules, global variables (`BUILD_IMAGE`), includes |
 | `.gitlab/ci/validate.yml` | `validate-configs` |
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
+| `.gitlab/ci/unit-tests.yml` | `unit-tool` |
+| `tests/unit/tool/` | desktop tool tests (headless PyQt5), fakes for board/console/broker in `fakes.py` |
 | `tools/ci/install_toolchain.sh` | **the** package list: armhf cross gcc + armhf libmodbus/mosquitto/sqlite3/ssl/curl/zlib. Used by CI and by the `Dockerfile` |
 | `tools/ci/build_info.py` | writes `build/build_info.json` |
 | `tests/pytest.ini`, `tests/requirements.txt` | pytest config (markers, strict xfail) and test dependencies |
@@ -109,6 +111,7 @@ Run from the repo root.
 | build exactly like CI | see §5.1 |
 | validate-configs | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev >/dev/null && pip install -q -r tests/requirements.txt && python -m pytest -c tests/pytest.ini tests/validate -p no:cacheprovider"` |
 | one config only | same, with `python tests/validate/validate_config.py configs/<file>.json` as the last command |
+| unit-tool | see §5.4 |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
 
 `--tmpfs /src/build-host:exec` keeps the compiled parser harness out of your tree
@@ -127,7 +130,7 @@ local image and CI stay identical only if you do.
 ## 4. Reading results in GitLab
 
 * **Pipeline page → job → log**: full output; the last lines say why it failed.
-* **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs`.
+* **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs` and `unit-tool`.
   Known issues show as *skipped* (xfail).
 * **Merge request → Code Quality widget**: new compiler warnings (and cppcheck
   findings, step 4).
@@ -280,6 +283,47 @@ in the tool or the Excel sheet), then re-export.
 | the tool writes a new key | schema + fixture + a negative case |
 | a firmware buffer size changes | nothing for the firmware check (the harness reports `sizeof`); update the schema `maxLength` |
 
+### 5.4 `unit-tool` — desktop tool tests (Python, headless PyQt5)
+
+**Covers** `tools/smart_rtu_tool`: `RegisterPoint`/`DeviceConfig` validation, JSON/CSV
+export and the project-file round trip; Excel import (header aliases, type
+synonyms, bad rows); the **SSH, serial and MQTT transports** against fakes of the
+board, its login console and a broker; the offline retry queue; the keyring
+wrapper; the Push / Read / Send / Erase / Retry workers for every delivery mode;
+and the window itself (device page ↔ config, register table, validation, save/load
+project, export, Excel replace/append, remembered passwords, "Erase All Data").
+
+**Run locally**
+```bash
+docker run --rm -v "$PWD":/src -w /src -e QT_QPA_PLATFORM=offscreen python:3.11-slim sh -c "
+  apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    libgl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libdbus-1-3 >/dev/null &&
+  pip install -q -r tools/smart_rtu_tool/requirements.txt -r tests/requirements.txt &&
+  python -m pytest -c tests/pytest.ini tests/unit -p no:cacheprovider"
+```
+Single test: add `-k test_push_csv_with_echo_writes_file` or a path such as
+`tests/unit/tool/test_workers.py::test_ssh_push_writes_config_then_restarts_app`.
+
+**Safety**: `tests/unit/tool/conftest.py` makes it impossible for a test to reach
+real hardware: `serial.Serial`, `paramiko.SSHClient` and `paho.mqtt.client.Client`
+fail the test unless a fake is installed, port listing returns nothing (the ESP32
+rig's `/dev/ttyUSB*` are never touched), the **OS keyring is replaced by an
+in-memory one** (your saved passwords are never read or changed) and the offline
+queue lives in a temp directory.
+
+**Writing tool tests — rules**
+
+* Dialogs: use the `dialogs` fixture (`dialogs.answer = QMessageBox.Yes`,
+  `dialogs.open_path`, `dialogs.save_path`; assert on `dialogs.kinds()` / `texts()`).
+  A real modal dialog would hang CI.
+* Transports: use the fakes in `fakes.py` (`FakeBoardFS` + `ssh_client_factory`,
+  `FakeConsole`, `FakeBroker`, `FakeTransport`) and `FakeClock` instead of sleeping.
+  The serial fake **echoes typed input like a real console**; keep that default.
+* Workers: call `worker.run()` directly; don't `start()` threads in tests (patch
+  `start` when testing the button handler that creates the worker).
+* A Python exception inside a Qt callback aborts the process ("Fatal Python error:
+  Aborted"); restore anything you stub on a widget in `try/finally`.
+
 ---
 
 ## 6. Known issues
@@ -294,6 +338,10 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 | For a register on the device's default slave the tool omits `slave_id`; the firmware takes the **next register's** `slave_id` | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave` |
 | OTA topics are built from the default device_id before the config is read: **every gateway uses `devices/AMSET-001/ota/*`** (the tool writes no `ota` section) | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
 | The tool's own validation accepts labels > 63 bytes, labels with `"`, overlapping 32-bit registers (the validate rules reject them) | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` (3 cases) |
+| **MQTT delivery mode has no firmware side**: the tool publishes to `amset/<id>/config/set`, the firmware subscribes only to its OTA topics, so MQTT "Push" always times out and queues | `tests/validate/test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
+| **Serial delivery doesn't work on a real console**: the JSON has no trailing newline, so the heredoc never ends and `smart_rtu_config.json` is not written; and because the console echoes the typed command (which contains the completion marker), failures are reported as success and Read returns the echoed command | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success`, `::test_read_text_with_echo` |
+| Excel import turns any data type containing "int" into `int32`: vendor `INT16` registers are read as 2 registers | `test_excel_import.py::test_int16_not_imported_as_int32` (3 cases) |
+| Offline queue: a second push in the same second overwrites the first; the queue keeps and re-sends only the CSV, the firmware reads the JSON | `test_offline_queue_credentials.py::test_two_pushes_in_one_second_both_kept`, `::test_queued_entry_keeps_the_json_the_firmware_reads` |
 | `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`) | change it on that network, and make the defaults empty |
 | The AWS IoT key (`private.key`) and the board password (`.env`) are still in **git history**, and the project is **public** on this GitLab | removed from the tree (§9). Rotate both; consider making the project private |
 | 9 compiler warnings | baseline (§5.2) |
@@ -332,6 +380,8 @@ Rebuild your local image.
 |---|---|
 | Job **pending** forever, runner idle | the runner isn't enabled for this project: `auto-tester` was registered as a std_gw project runner. Settings → CI/CD → Runners → *Other available runners* → **Enable for this project** (Admin → Runners → untick "Lock to current projects" if it's not offered). Done once on 2026-10-05 |
 | Job **pending** "no runner" | job tags don't match an online runner (`sudo gitlab-runner verify`) |
+| `Fatal Python error: Aborted` in unit-tool | exception inside a Qt callback (§5.4) |
+| unit-tool: `test tried to open a real serial port` | the code path needs a fake: see `fakes.py` (§5.4) |
 | validate: `no C compiler found` | install `gcc libc6-dev` (the job's `before_script` does), or set `$CC` |
 | validate: `firmware parser exited with 1` + an ASan/UBSan report | the firmware's parser has a memory bug on that input: fix `json.c`/`settings.c`/`data.c`, add the input as a negative case |
 | validate: `firmware reads X = …, the file means …` | see §5.3; the hint says when a key was taken from a later section |
@@ -384,7 +434,6 @@ but disruptive; rotation makes the leaked values useless.
 
 | Step | Stage | Adds |
 |---|---|---|
-| 3 | unit-test | `unit-tool`: pytest, headless PyQt5, fake SSH/serial/MQTT transports |
 | 4 | static-analysis | `cppcheck` (baseline gate) and `doxygen` (0 warnings) |
 | 5 | unit-test | `unit-firmware`: host C tests (Unity + ASan/UBSan) of libmodbus/mosquitto-free modules |
 | 6 | release | tag `v<APP_VERSION_DEF>`, binary + libs + `SHA256SUMS` |

@@ -14,6 +14,7 @@ Contents
 5. [Conventions every test follows](#5-conventions-every-test-follows)
 6. [Which kind of test do I write?](#6-which-kind-of-test-do-i-write)
 7. [Regression index: bug → test](#7-regression-index-bug--test)
+8. [Desktop tool unit tests](#8-desktop-tool-unit-tests-testsunittool)
 
 ---
 
@@ -24,9 +25,9 @@ what only hardware can show.
 
 | Layer | Folder | CI job | Needs | Time | Count |
 |---|---|---|---|---|---|
-| Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 66 tests + 6 known issues |
+| Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 66 tests + 7 known issues |
 | Compiler warnings | `tests/static/warnings_gate.py` | `compiler-warnings` | a clean build log | seconds | 1 gate |
-| Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | — | step 3 |
+| Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 121 tests + 8 known issues |
 | cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | — | — | step 4 |
 | Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | — | step 5 |
 | Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
@@ -47,6 +48,9 @@ python3 -m pytest -c tests/pytest.ini tests/validate
 
 # one test, verbose
 python3 -m pytest -c tests/pytest.ini "tests/validate/test_negative_configs.py::test_rejected[label_64_bytes]" -v
+
+# desktop tool (needs the tool's requirements.txt; Qt runs headless)
+QT_QPA_PLATFORM=offscreen python3 -m pytest -c tests/pytest.ini tests/unit
 
 # one config file
 python3 tests/validate/validate_config.py configs/plant_a.json
@@ -135,6 +139,8 @@ comparison doesn't see the field.
 | A config rule, a buffer size the tool must respect | `tests/validate/` (rule + negative case) |
 | A key the firmware reads (`settings_load()`, `parse_registers()`) | `fw_config_dump.c` + schema + fixture (§3.2) |
 | Register / data type names | all of: `inc/data.h`, `data.c`, tool tables, schema; `test_type_consistency.py` tells you what's missing |
+| The desktop tool (model, import, transports, workers, window) | `tests/unit/tool/` (§8) |
+| A delivery mode (SSH / serial / MQTT) | transport test against the matching fake, plus a worker test for what the button does |
 | Any C code | it must build without new warnings (`compiler-warnings`) |
 
 ---
@@ -150,3 +156,45 @@ Open ones are strict xfails (they fail once fixed, then become regressions).
 | Register on the default slave polled from the next register's slave | open | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave`, negative `register_slave_id_missing_taken_from_next` |
 | All gateways use OTA topics `devices/AMSET-001/ota/*` | open | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
 | Tool accepts labels the firmware truncates/misparses, overlapping 32-bit registers | open | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` |
+| MQTT delivery: firmware doesn't subscribe to the tool's config topic | open | `test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
+| Serial delivery: JSON not written (heredoc never ends) but reported as success | open | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success` |
+| Serial Read returns the echoed command, not the file | open | `test_serial_transport.py::test_read_text_with_echo` |
+| Excel `INT16` imported as `int32` | open | `test_excel_import.py::test_int16_not_imported_as_int32` |
+| Offline queue overwrites same-second pushes; keeps only the CSV | open | `test_offline_queue_credentials.py` (2 tests) |
+
+---
+
+## 8. Desktop tool unit tests (`tests/unit/tool/`)
+
+The PyQt5 tool runs **headless** (`QT_QPA_PLATFORM=offscreen`). Nothing reaches
+real hardware, network or your keyring: see the safety notes in
+[`CI_CD_GUIDE.md` §5.4](CI_CD_GUIDE.md#54-unit-tool--desktop-tool-tests-python-headless-pyqt5).
+
+### 8.1 Fixtures and fakes
+
+| Name | Where | Use |
+|---|---|---|
+| `qapp`, `window` | `conftest.py` | the QApplication; a fresh `MainWindow` (closed after the test) |
+| `dialogs` | `conftest.py` | records every `QMessageBox`/`QFileDialog`; set `answer`, `open_path`, `save_path` |
+| `memory_keyring`, `queue_dir` | `conftest.py` (autouse) | in-memory OS keyring (`.store`), temp offline queue |
+| `FakeBoardFS` + `ssh_client_factory` | `fakes.py` | the board over SSH: files dict, runs `mv`/`rm`/`tail`, records commands and connections |
+| `FakeConsole` | `fakes.py` | a login shell on the serial port: login/password prompts, **echo** (default on, like a real TTY), heredoc, `mv`/`rm`/`cat`/`echo`, `&&` chains; `fail_mv=True` makes writes fail |
+| `FakeBroker` | `fakes.py` | MQTT broker: retained messages, CONNACK codes, `responders` that reply on an ack topic |
+| `FakeTransport` | `fakes.py` | records calls; `results[method]` sets what a call returns |
+| `FakeClock` | `fakes.py` | replaces a module's `time`: `sleep()` advances `time()` instantly |
+
+### 8.2 The test files
+
+| File | What it checks |
+|---|---|
+| `test_register_model.py` | Point validation edges (label, address 0–65535, slave 0–247, types); `validate_all()` reports every bad row and exact duplicates, but not the same address on another slave; the combined config has every section the firmware reads; `slave_id` omitted for "device default"; JSON/CSV files; **project file round trip of every field**; older project files; ESP32 NVS export import. |
+| `test_excel_import.py` | Minimal Label/Address sheet; header aliases; missing required column is an error; register/data type synonyms; unknown types default with one warning each; bad rows skipped with the right Excel row numbers; blank rows ignored; imported points valid. Known issue: `INT16` → `int32`. |
+| `test_ssh_transport.py` | Connect parameters; failures reported, not raised; write to `.tmp` then `mv` (atomic); rename failure; both config files; stop after the first failure; binary upload; read / missing file; delete; restart command; log tail. |
+| `test_serial_transport.py` | Login with username/password; writes via heredoc with echo off; the CSV with echo on; failure detection without echo; read; delete; port closed afterwards. Known issues: JSON not written, failures reported as success, Read returns the echo. |
+| `test_mqtt_transport.py` | TLS and credentials; CONNACK refusals explained; CONNACK timeout; success **only with an ack**; no ack → failure but retained; CSV + JSON topics; read retained; delete clears retained; no file upload. |
+| `test_offline_queue_credentials.py` | Queue enqueue/list/remove, corrupt files skipped, oldest first; keyring save/read/clear. Known issues: same-second overwrite, CSV-only queue. |
+| `test_workers.py` | What Push / Read / Send / Erase / Retry do per mode: SSH push then restart (not on failure), serial login passed through, MQTT failure queues the config, certificates uploaded first (failure stops), MQTT says certs must be placed manually, exceptions become failures, read/erase targets per mode, "Send Settings" doesn't restart, retry removes only delivered entries. |
+| `test_main_window.py` | Device page ↔ config round trip; default device_id; board cert paths written (not PC paths); table ↔ points; invalid rows block validation/push with a dialog; push uses the selected mode and the full config; passwords saved to the keyring only when "Remember" is ticked and prefilled on start; save/load project; broken project; cancelled dialogs change nothing; export writes `.csv` + `.json`; Excel replace/append/cancel; delete rows; retry needs the MQTT tab; "Erase All Data" asks first and clears queue + keyring; status log escapes HTML. |
+
+**Adding a test**: drive the real widget or function; answer dialogs with `dialogs`;
+for anything that talks to the board use the fakes, never a real port or host.
