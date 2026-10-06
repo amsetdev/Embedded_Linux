@@ -35,7 +35,7 @@ struct msg_queue
 /* API                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/**
+/*
  * @brief Creates a new message queue.
  *
  * @param capacity  Maximum messages. 0 = default.
@@ -75,7 +75,7 @@ msg_queue_t *msg_queue_create(int capacity)
     return q;
 }
 
-/**
+/*
  * @brief Pushes a message onto the queue (never blocks).
  *
  * @param q        Queue handle.
@@ -123,7 +123,7 @@ int msg_queue_push(msg_queue_t *q, const char *payload)
     return 0;
 }
 
-/**
+/*
  * @brief Pops a message from the queue (blocks until available).
  *
  * @param q  Queue handle.
@@ -159,7 +159,7 @@ char *msg_queue_pop(msg_queue_t *q)
     return msg;
 }
 
-/**
+/*
  * @brief Signals the queue to shut down.
  *
  * @param q  Queue handle.
@@ -179,7 +179,7 @@ void msg_queue_shutdown(msg_queue_t *q)
     printf("[MSGQ] Shutdown signalled\n");
 }
 
-/**
+/*
  * @brief Destroys the queue and frees all resources.
  *
  * @param q  Queue handle.

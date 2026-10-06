@@ -4,7 +4,7 @@
 
 stages:
   - validate          # step 2: config schema / rules / real firmware parser  <-- active
-  - static-analysis   # step 4: cppcheck baseline + Doxygen gate
+  - static-analysis   # step 4: cppcheck baseline + Doxygen gate  <-- active
   - build             # step 1: cross-compile (armhf) + compiler-warning gate  <-- active
   - unit-test         # steps 3/5: Python tool tests + host C tests
   - hardware-test     # step 7: HIL on the CI DK2 board (runner tag `stm32-hil`)
@@ -33,5 +33,6 @@ default:
 
 include:
   - local: .gitlab/ci/validate.yml
+  - local: .gitlab/ci/static-analysis.yml
   - local: .gitlab/ci/build.yml
   - local: .gitlab/ci/unit-tests.yml

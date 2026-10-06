@@ -209,7 +209,7 @@ static void cleanup(master_ctx_t *ctx)
     }
 }
 
-/**
+/*
  * @brief Modbus TCP polling thread.
  *
  * Initializes the SQLite database, connects to the Modbus TCP slave,

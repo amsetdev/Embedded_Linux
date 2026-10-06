@@ -99,7 +99,7 @@ struct mosquitto *mqtt_get_mosq(void)
     return mosq;
 }
 
-/**
+/*
  * @brief Publishes a payload to an arbitrary MQTT topic.
  *
  * @param topic   MQTT topic.
@@ -231,7 +231,7 @@ int mqtt_init(void)
     return 1;
 }
 
-/**
+/*
  * @brief Builds a JSON payload containing Modbus point values.
  *
  * Creates a JSON message consisting of the current timestamp and all
@@ -291,7 +291,7 @@ void build_payload(char *buf, size_t buflen)
     snprintf(buf + pos, buflen - pos, "}}");
 }
 
-/**
+/*
  * @brief Publishes a payload to the configured MQTT topic.
  *
  * If the MQTT client is connected and internet connectivity is

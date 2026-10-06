@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/**
+/*
  * @brief Reads the contents of a file into a dynamically allocated buffer.
  *
  * Opens the specified file, reads its entire contents, and returns
@@ -48,7 +48,7 @@ char *read_file(const char *filename)
     return buffer;
 }
 
-/**
+/*
  * @brief Retrieves a string value associated with a key from a JSON string.
  *
  * Searches for the specified key in the JSON text and copies its
@@ -110,7 +110,7 @@ int json_get_string(const char *json,
     return 0;
 }
 
-/**
+/*
  * @brief Retrieves an integer value associated with a key from a JSON string.
  *
  * Searches for the specified key in the JSON text and converts the
@@ -153,7 +153,7 @@ int json_get_int(const char *json,
     return 0;
 }
 
-/**
+/*
  * @brief Retrieves a string value from a JSON object.
  *
  * Wrapper around json_get_string() for extracting a string value
@@ -177,7 +177,7 @@ int json_get_string_from(const char *object,
                            value_size);
 }
 
-/**
+/*
  * @brief Retrieves an integer value from a JSON object.
  *
  * Wrapper around json_get_int() for extracting an integer value

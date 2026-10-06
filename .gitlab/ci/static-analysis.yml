@@ -1,0 +1,47 @@
+# Static analysis — DOCS/CI_CD_GUIDE.md §5.5, §5.6
+#
+# Both jobs check exactly the C files the makefile builds (SRCS, read by
+# tests/static/srcs.py); src/fieldbus/modbus.c and src/control_logic.c are not built.
+
+# cppcheck with a baseline: the 61 findings that existed when this job was added are
+# in tests/static/cppcheck-baseline.json; the job fails only when a change ADDS one.
+# Fixed old ones: `python3 tests/static/cppcheck_gate.py --update-baseline` and commit.
+# Findings appear in the merge request's Code Quality widget.
+cppcheck:
+  stage: static-analysis
+  image: python:3.11-slim
+  needs: []
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends cppcheck > /dev/null
+    - cppcheck --version
+  script:
+    - python tests/static/cppcheck_gate.py
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      codequality: reports/gl-code-quality.json
+    paths:
+      - reports/cppcheck.xml
+      - reports/gl-code-quality.json
+
+# Doxygen: every function, struct, member, macro and global of the built code must be
+# documented; any doxygen warning fails. Also checks the Doxyfile covers exactly the
+# makefile's SRCS. HTML kept as an artifact (Browse -> build-docs/html/index.html).
+doxygen:
+  stage: static-analysis
+  image: python:3.11-slim
+  needs: []
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends doxygen > /dev/null
+    - doxygen --version
+  script:
+    - python tests/static/doxygen_gate.py
+  artifacts:
+    when: always
+    expire_in: 4 weeks
+    paths:
+      - build-docs/html/
+      - build-docs/doxygen-warnings.log

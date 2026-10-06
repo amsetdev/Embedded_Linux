@@ -364,7 +364,7 @@ static void ota_process_system(const ota_request_t *req)
 /* OTA thread                                                                 */
 /* -------------------------------------------------------------------------- */
 
-/**
+/*
  * @brief OTA worker thread main loop.
  *
  * Waits for OTA requests via condition variable and processes
@@ -435,7 +435,7 @@ void *ota_thread_func(void *arg)
 /* MQTT message callback                                                      */
 /* -------------------------------------------------------------------------- */
 
-/**
+/*
  * @brief MQTT message callback for OTA command topics.
  *
  * Parses the incoming JSON message, determines the OTA type from
@@ -521,14 +521,7 @@ void ota_on_message(struct mosquitto *m,
 /* Init / Cleanup                                                             */
 /* -------------------------------------------------------------------------- */
 
-/**
- * @brief Initializes the OTA subsystem.
- *
- * Creates the download directory.
- *
- * @return 1 on success, 0 on failure.
- */
-/**
+/*
  * @brief Sets the watchdog heartbeat ID for the OTA thread.
  *
  * @param id  Watchdog ID from watchdog_register().

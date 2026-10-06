@@ -16,21 +16,27 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
+/** @brief Registers parsed from smart_rtu_config.json by parse_registers(). */
 static ModbusPoint points[MAX_POINTS];
+
+/** @brief Number of valid entries in points[]. */
 static int point_count = 0;
 
 /* -------------------------------------------------------------------------- */
 /* Fieldbus driver state                                                      */
 /* -------------------------------------------------------------------------- */
 
+/** @brief Fieldbus driver used for polling (set by data_init_driver()). */
 static const fieldbus_driver_t *rtu_driver = NULL;
+
+/** @brief Driver context returned by rtu_driver->init(). */
 static void *rtu_ctx = NULL;
 
 /*-----------------------------------------------------------*/
 /* Fieldbus Driver Management                                */
 /*-----------------------------------------------------------*/
 
-/**
+/*
  * @brief Initialize the fieldbus driver for register reading.
  *
  * @param drv    Pointer to the fieldbus driver vtable.
@@ -338,7 +344,7 @@ static int read_point_32bit(ModbusPoint *pt)
 }
 
 /*-----------------------------------------------------------*/
-/**
+/*
  * @brief Read one Modbus point via the fieldbus driver.
  *
  * Dispatches to read_point_float() for 32-bit float registers,
@@ -431,7 +437,7 @@ void read_all_points(void)
 }
 
 /*-----------------------------------------------------------*/
-/**
+/*
  * @brief Write a single register or coil via the fieldbus driver.
  *
  * @param slave_id Modbus slave address (1-247).
@@ -482,7 +488,7 @@ int data_write_register(int slave_id,
 }
 
 /*-----------------------------------------------------------*/
-/**
+/*
  * @brief Write a contiguous block of registers or coils.
  *
  * @param slave_id Modbus slave address (1-247).

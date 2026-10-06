@@ -16,12 +16,14 @@ to a cross-compiled Linux application on a Cortex-A7.
 ```
 stage:  validate           static-analysis   build                      unit-test    hardware-test   release
         ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
-        validate-configs   (step 4)          build-firmware ──►         unit-tool    (step 7)        (step 6)
-                                             compiler-warnings          (step 5)
+        validate-configs   cppcheck          build-firmware ──►         unit-tool    (step 7)        (step 6)
+                           doxygen           compiler-warnings          (step 5)
 ```
 
-* `validate-configs` and `unit-tool` (`needs: []`) start immediately and take seconds.
-  `build-firmware` waits for the `validate` stage, so a bad config stops the build.
+* `validate-configs`, `cppcheck`, `doxygen` and `unit-tool` (`needs: []`) start
+  immediately and run in parallel. `build-firmware` waits for the `validate` and
+  `static-analysis` stages, so a bad config, a new cppcheck finding or an
+  undocumented function stops the build.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
   collects the runtime libraries into `build/lib/`.
 * `compiler-warnings` reads the build log and fails on any compiler warning that
@@ -46,6 +48,7 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 |---|---|
 | `.gitlab-ci.yml` | stages, workflow rules, global variables (`BUILD_IMAGE`), includes |
 | `.gitlab/ci/validate.yml` | `validate-configs` |
+| `.gitlab/ci/static-analysis.yml` | `cppcheck`, `doxygen` |
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
 | `.gitlab/ci/unit-tests.yml` | `unit-tool` |
 | `tests/unit/tool/` | desktop tool tests (headless PyQt5), fakes for board/console/broker in `fakes.py` |
@@ -57,6 +60,9 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `tests/fixtures/configs/` | known-good test config (`full_config.json`) |
 | `configs/` | real device configs, one per device (validated automatically; none yet) |
 | `tests/static/warnings_gate.py` | compiler-warning gate |
+| `tests/static/cppcheck_gate.py`, `cppcheck-baseline.json` | cppcheck gate + the 61 accepted findings |
+| `tests/static/doxygen_gate.py`, `Doxyfile`, `DOCS/DOXYGEN_MAINPAGE.md` | Doxygen gate, its config (non-default settings only) and start page |
+| `tests/static/srcs.py` | reads `SRCS` from the makefile: the static gates check exactly what is built |
 | `tests/static/compiler-warnings-baseline.json` | warnings accepted when the gate was added (9) |
 | `Dockerfile` | local build environment (same packages via `install_toolchain.sh`) |
 | `makefile` | build (`all`), `-Wall -Wextra` in `WARNINGS`, deploy targets |
@@ -112,6 +118,8 @@ Run from the repo root.
 | validate-configs | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev >/dev/null && pip install -q -r tests/requirements.txt && python -m pytest -c tests/pytest.ini tests/validate -p no:cacheprovider"` |
 | one config only | same, with `python tests/validate/validate_config.py configs/<file>.json` as the last command |
 | unit-tool | see §5.4 |
+| cppcheck | `docker run --rm -v "$PWD":/src --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq cppcheck >/dev/null && python tests/static/cppcheck_gate.py"` (or `sudo apt install cppcheck`; CI uses 2.17) |
+| doxygen | `docker run --rm -v "$PWD":/src -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq doxygen >/dev/null && python tests/static/doxygen_gate.py"` → `build-docs/html/index.html` (CI uses 1.9.8) |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
 
 `--tmpfs /src/build-host:exec` keeps the compiled parser harness out of your tree
@@ -132,8 +140,8 @@ local image and CI stay identical only if you do.
 * **Pipeline page → job → log**: full output; the last lines say why it failed.
 * **Pipeline page → Tests tab**: per-test results (JUnit) of `validate-configs` and `unit-tool`.
   Known issues show as *skipped* (xfail).
-* **Merge request → Code Quality widget**: new compiler warnings (and cppcheck
-  findings, step 4).
+* **Merge request → Code Quality widget**: new compiler warnings and cppcheck findings.
+* **`doxygen` job → Browse artifacts → `build-docs/html/index.html`**: the API documentation.
 * **Job → Browse / Download artifacts**: `build/main`, `build/lib/`,
   `build/build_info.json`, `build/build.log`.
 
@@ -324,6 +332,53 @@ queue lives in a temp directory.
 * A Python exception inside a Qt callback aborts the process ("Fatal Python error:
   Aborted"); restore anything you stub on a widget in `try/finally`.
 
+### 5.5 `cppcheck` — static analysis with a baseline
+
+**Checks**: cppcheck 2.17 (`--enable=warning,style,performance,portability`,
+exhaustive, 32-bit platform) on the 18 files in the makefile's `SRCS`. The 61
+findings that existed when the job was added are in
+`tests/static/cppcheck-baseline.json` (39 unused struct members, 16 could-be-const
+pointers, 2 `%d` for unsigned in `display.c`, 2 shadowed `cfg`, …). The job **fails
+only on new findings**, matched by file + check id + message (not line number).
+
+**Reading a failure** (example)
+```
+cppcheck: 62 findings, baseline 61, new 1, fixed 0
+NEW findings (fix them, or add '// cppcheck-suppress <id>' with a reason):
+  src/cloud/mqtt.c:120: warning: nullPointerRedundantCheck: Either the condition 'mosq' is redundant or there is possible null pointer dereference: mosq.
+```
+
+**What to do**: fix the code (preferred); a false positive gets
+`// cppcheck-suppress <id>` on the line above with a comment why. Fixed old findings:
+`python3 tests/static/cppcheck_gate.py --update-baseline` and commit the baseline.
+Never update the baseline to make new findings go away. Settings: `CPPCHECK_ARGS` in
+`cppcheck_gate.py`.
+
+### 5.6 `doxygen` — documentation gate
+
+**Checks**: `doxygen Doxyfile` over `src/` and `inc/` must produce **no warnings**:
+every function, struct, member, macro and global documented, every parameter and
+return value described. Before running doxygen the gate checks that the Doxyfile
+covers exactly the makefile's `SRCS`: every built file in `INPUT` and not excluded,
+every unbuilt `src/*.c` excluded (today `src/fieldbus/modbus.c`, `src/control_logic.c`
+and their headers). The HTML is kept as an artifact.
+
+Not documented on purpose: the copy of the kernel's DRM UAPI structs in
+`src/ui/display.c` (between `@cond DRM_UAPI` and `@endcond`, like vendored code).
+
+**Reading a failure** (example)
+```
+doxygen: 2 warning(s), document these (style: DOCS/TESTS_GUIDE.md §4.1):
+  src/cloud/storage.c:40: warning: Member MY_LIMIT (macro definition) of file storage.c is not documented.
+  inc/mqtt.h:80: warning: The following parameter of mqtt_publish_to(...) is not documented: parameter 'qos'
+```
+
+**What to do**: add the comment (style in `TESTS_GUIDE.md` §4.1). Public functions are
+documented **in the header only**; a second `/** … */` block on the definition gives
+"has multiple @param documentation sections" (use a plain `/* … */` comment there).
+`<word>` in a comment is read as an HTML tag: write `\<word\>`. A file that becomes
+built (added to `SRCS`) must be removed from `EXCLUDE`; the gate tells you.
+
 ---
 
 ## 6. Known issues
@@ -351,7 +406,10 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 ## 7. Recipes for common changes
 
 **New source file**: add it to `SRCS` in the `makefile` (and a new subdirectory
-to `BUILD_SUBDIRS`). It is then built and warning-gated automatically.
+to `BUILD_SUBDIRS`). It is then built, warning-gated, cppcheck'd and must be fully
+documented (Doxygen) automatically. Building one of today's unbuilt files
+(`modbus.c`, `control_logic.c`): also remove it and its header from `EXCLUDE` in the
+`Doxyfile` and document it.
 
 **New library dependency**: `install_toolchain.sh` (`libfoo-dev:armhf`) +
 `LDFLAGS` in the `makefile`; `collect-libs.sh` picks up the `.so` by itself.
@@ -382,6 +440,9 @@ Rebuild your local image.
 | Job **pending** "no runner" | job tags don't match an online runner (`sudo gitlab-runner verify`) |
 | `Fatal Python error: Aborted` in unit-tool | exception inside a Qt callback (§5.4) |
 | unit-tool: `test tried to open a real serial port` | the code path needs a fake: see `fakes.py` (§5.4) |
+| cppcheck job fails after a refactor | moved code can produce a "new" finding plus a "fixed" one: fix it, then `--update-baseline` |
+| doxygen: `Doxyfile does not match the makefile` | a file was added to / removed from `SRCS`: update `INPUT`/`EXCLUDE` (§5.6) |
+| doxygen: `has multiple @param documentation sections` | the function is documented in the header **and** at the definition: make the definition's comment a plain `/* */` |
 | validate: `no C compiler found` | install `gcc libc6-dev` (the job's `before_script` does), or set `$CC` |
 | validate: `firmware parser exited with 1` + an ASan/UBSan report | the firmware's parser has a memory bug on that input: fix `json.c`/`settings.c`/`data.c`, add the input as a negative case |
 | validate: `firmware reads X = …, the file means …` | see §5.3; the hint says when a key was taken from a later section |
@@ -434,7 +495,6 @@ but disruptive; rotation makes the leaked values useless.
 
 | Step | Stage | Adds |
 |---|---|---|
-| 4 | static-analysis | `cppcheck` (baseline gate) and `doxygen` (0 warnings) |
 | 5 | unit-test | `unit-firmware`: host C tests (Unity + ASan/UBSan) of libmodbus/mosquitto-free modules |
 | 6 | release | tag `v<APP_VERSION_DEF>`, binary + libs + `SHA256SUMS` |
 | 7 | hardware-test | dedicated DK2 over SSH (runner tag `stm32-hil`): Modbus TCP + RTU slaves, AWS IoT observer, SIGHUP reload, store-and-forward, crash detection |

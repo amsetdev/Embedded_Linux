@@ -28,7 +28,7 @@ what only hardware can show.
 | Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 66 tests + 7 known issues |
 | Compiler warnings | `tests/static/warnings_gate.py` | `compiler-warnings` | a clean build log | seconds | 1 gate |
 | Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 121 tests + 8 known issues |
-| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | — | — | step 4 |
+| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (61 accepted findings; 0 doc warnings) |
 | Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | — | step 5 |
 | Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
 
@@ -54,6 +54,10 @@ QT_QPA_PLATFORM=offscreen python3 -m pytest -c tests/pytest.ini tests/unit
 
 # one config file
 python3 tests/validate/validate_config.py configs/plant_a.json
+
+# static gates (need cppcheck / doxygen)
+python3 tests/static/cppcheck_gate.py
+python3 tests/static/doxygen_gate.py      # HTML in build-docs/html
 
 # compiler warnings (after a CLEAN build that wrote build.log)
 python3 tests/static/warnings_gate.py build.log
@@ -110,6 +114,36 @@ comparison doesn't see the field.
 |---|---|---|
 | `tests/static/warnings_gate.py` | the clean build log has a `-Wall -Wextra` warning not in `compiler-warnings-baseline.json` (9 accepted) | [`CI_CD_GUIDE.md` §5.2](CI_CD_GUIDE.md#52-compiler-warnings--no-new-warnings). Fixed old ones: `--update-baseline` and commit |
 | ELF check in `build-firmware` | `build/main` is not a 32-bit ARM EABI5 hard-float executable | `.gitlab/ci/build.yml` |
+| `tests/static/cppcheck_gate.py` | cppcheck finds anything not in `cppcheck-baseline.json` | [`CI_CD_GUIDE.md` §5.5](CI_CD_GUIDE.md#55-cppcheck--static-analysis-with-a-baseline) |
+| `tests/static/doxygen_gate.py` | any doxygen warning, or the Doxyfile doesn't cover exactly the makefile's `SRCS` | [`CI_CD_GUIDE.md` §5.6](CI_CD_GUIDE.md#56-doxygen--documentation-gate) |
+
+### 4.1 Doxygen style used in this repo
+
+Copy it for new code:
+
+```c
+/**
+ * @brief One sentence: what it does.
+ *
+ * Optional details: when it is called, what it must not do, units, locking.
+ *
+ * @param slave_id Modbus slave address (1-247).
+ * @param addr     Register address.
+ * @param value    Value to write.
+ * @return 1 on success, 0 on failure.
+ */
+int data_write_register(int slave_id, RegType reg_type, uint16_t addr, uint16_t value);
+```
+
+* **Public functions: in the header only.** The definition in the `.c` file may keep a
+  plain `/* … */` comment; a second `/** … */` block gives "multiple @param
+  documentation sections".
+* Static functions, file-local variables and macros: at the definition in the `.c` file.
+* Struct members, enum values and short macros: trailing `/**< … */`.
+* Every `@param` and the `@return` (unless `void`).
+* Describe what the code **does** today, including limits and "not called" where true.
+* Copied third-party definitions (like the DRM UAPI structs in `display.c`) go between
+  `/** @cond NAME` … `/** @endcond */` with a note where they come from.
 
 ---
 
@@ -141,7 +175,8 @@ comparison doesn't see the field.
 | Register / data type names | all of: `inc/data.h`, `data.c`, tool tables, schema; `test_type_consistency.py` tells you what's missing |
 | The desktop tool (model, import, transports, workers, window) | `tests/unit/tool/` (§8) |
 | A delivery mode (SSH / serial / MQTT) | transport test against the matching fake, plus a worker test for what the button does |
-| Any C code | it must build without new warnings (`compiler-warnings`) |
+| Any C code | it must build without new warnings (`compiler-warnings`) and without new cppcheck findings |
+| Any C function, struct, member, macro or global | its Doxygen comment (§4.1; the `doxygen` job fails otherwise) |
 
 ---
 

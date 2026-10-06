@@ -30,8 +30,13 @@
 #include <sys/stat.h>
 #include <stdatomic.h>
 
+/** @brief Directory holding payloads stored while offline (one file per payload). */
 #define STORAGE_DIR          "/home/root/edb_c/linking/storage"
+
+/** @brief Size of the path buffers for files in STORAGE_DIR. */
 #define MAX_PATH             256
+
+/** @brief Seconds between attempts of the replay thread to publish stored payloads. */
 #define REPLAY_INTERVAL_SEC  60
 
 /** @brief Replay thread handle. */
@@ -65,7 +70,7 @@ int offline_init(void)
     return 1;
 }
 
-/**
+/*
  * @brief Stores an MQTT payload for later transmission.
  *
  * The payload is written to a text file using the current

@@ -23,6 +23,12 @@
 #include <sys/ioctl.h>
 #include <linux/input.h>
 
+/** @cond DRM_UAPI
+ * Minimal copy of the Linux DRM userspace API (<drm/drm.h>, <drm/drm_mode.h>):
+ * the structs and ioctl numbers needed for a dumb framebuffer. Field names and
+ * layout must stay identical to the kernel's; see the kernel's DRM KMS
+ * documentation. Hidden from Doxygen like vendored code.
+ */
 #define DRM_IOCTL_BASE          'd'
 #define DRM_IOWR(nr,t)          _IOWR(DRM_IOCTL_BASE,(nr),t)
 #define DRM_CAP_DUMB_BUFFER     0x1
@@ -72,9 +78,17 @@ struct drm_mode_map_dumb { uint32_t handle,pad; uint64_t offset; };
 #define DRM_IOCTL_MODE_CREATE_DUMB  DRM_IOWR(0xB2, struct drm_mode_create_dumb)
 #define DRM_IOCTL_MODE_MAP_DUMB     DRM_IOWR(0xB3, struct drm_mode_map_dumb)
 
+/** @endcond */
+
+/** @brief DRM device node of the DK2's display controller. */
 #define DRM_DEVICE "/dev/dri/card0"
 
 
+/**
+ * @brief 5x7 pixel font for ASCII 0x20 (space) to 0x7E (~).
+ *
+ * One entry per character, 5 column bytes; bit 0 is the top row.
+ */
 static const uint8_t FONT5X7[][5] = {
   {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},
   {0x14,0x7F,0x14,0x7F,0x14},{0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},
@@ -114,19 +128,21 @@ static const uint8_t FONT5X7[][5] = {
 int    disp_ok      = 0;
 Screen cur_screen   = SCREEN_STATUS;
 
-static int      drm_fd        = -1;
-static uint32_t drm_fb_id, drm_crtc_id, drm_conn_id;
-static uint32_t *drm_map      = NULL;
-static size_t    drm_size     = 0;
-static uint32_t  drm_pitch_px = DISP_W;
+static int      drm_fd        = -1;      /**< Open DRM device, -1 when closed. */
+static uint32_t drm_fb_id;              /**< DRM framebuffer ID of the dumb buffer. */
+static uint32_t drm_crtc_id;            /**< CRTC driving the connected display. */
+static uint32_t drm_conn_id;            /**< Connector ID of the connected display. */
+static uint32_t *drm_map      = NULL;   /**< Dumb buffer mapped into memory (XRGB8888). */
+static size_t    drm_size     = 0;      /**< Size of drm_map in bytes. */
+static uint32_t  drm_pitch_px = DISP_W; /**< Dumb buffer line length in pixels. */
 
-static uint16_t  fb[DISP_H][DISP_W];
+static uint16_t  fb[DISP_H][DISP_W];    /**< RGB565 back buffer; copied to drm_map by drm_flush(). */
 
-static int touch_fd    = -1;
-static int touch_x     = -1;
-static int touch_y     = -1;
-static int touch_down  = 0;
-static int touch_tapped = 0;
+static int touch_fd    = -1;            /**< evdev touch device, -1 when absent. */
+static int touch_x     = -1;            /**< Last ABS_X / ABS_MT_POSITION_X from the touch device, -1 before the first touch. */
+static int touch_y     = -1;            /**< Last ABS_Y / ABS_MT_POSITION_Y from the touch device, -1 before the first touch. */
+static int touch_down  = 0;             /**< 1 while the screen is touched (BTN_TOUCH). */
+static int touch_tapped = 0;            /**< 1 for one touch_poll() after a new touch began. */
 
 /**
  * @brief Initializes the DRM display subsystem.
@@ -291,7 +307,7 @@ void touch_poll(void)
     if (!prev && touch_down) touch_tapped = 1;
 }
 
-/**
+/*
  * @brief Tests whether the last tap fell inside a rectangle.
  *
  * @param x Left edge of the rectangle in pixels.
@@ -324,7 +340,7 @@ int touch_in_rect(int x, int y, int w, int h)
 static inline void fb_pixel(int x, int y, uint16_t c)
 { if (x>=0 && x<DISP_W && y>=0 && y<DISP_H) fb[y][x] = c; }
 
-/**
+/*
  * @brief Fills the entire software framebuffer with a single color.
  *
  * @param c RGB565 color value.
@@ -332,7 +348,7 @@ static inline void fb_pixel(int x, int y, uint16_t c)
 void fb_fill(uint16_t c)
 { for (int y=0;y<DISP_H;y++) for (int x=0;x<DISP_W;x++) fb[y][x]=c; }
 
-/**
+/*
  * @brief Draws a filled rectangle in the software framebuffer.
  *
  * @param x Left edge X coordinate.
@@ -344,7 +360,7 @@ void fb_fill(uint16_t c)
 void fb_rect(int x, int y, int w, int h, uint16_t c)
 { for (int dy=0;dy<h;dy++) for (int dx=0;dx<w;dx++) fb_pixel(x+dx,y+dy,c); }
 
-/**
+/*
  * @brief Draws a horizontal line in the software framebuffer.
  *
  * @param x Starting X coordinate.
@@ -355,7 +371,7 @@ void fb_rect(int x, int y, int w, int h, uint16_t c)
 void fb_hline(int x, int y, int len, uint16_t c)
 { for (int i=0;i<len;i++) fb_pixel(x+i,y,c); }
 
-/**
+/*
  * @brief Draws a one-pixel-wide rectangular border.
  *
  * @param x Left edge X coordinate.
@@ -370,7 +386,7 @@ void fb_border(int x, int y, int w, int h, uint16_t c)
     for (int i=0;i<h;i++) { fb_pixel(x,y+i,c); fb_pixel(x+w-1,y+i,c); }
 }
 
-/**
+/*
  * @brief Renders a single character using the built-in 5x7 bitmap font.
  *
  * Characters outside the printable ASCII range (0x20--0x7E) are
@@ -397,7 +413,7 @@ int fb_char(int x, int y, char c, uint16_t fg, uint16_t bg, int s)
     return x + (5+1)*s;
 }
 
-/**
+/*
  * @brief Renders a null-terminated string using the built-in 5x7 font.
  *
  * @param x  Starting X coordinate.
@@ -411,7 +427,7 @@ int fb_char(int x, int y, char c, uint16_t fg, uint16_t bg, int s)
 int fb_str(int x, int y, const char *s, uint16_t fg, uint16_t bg, int sc)
 { while (*s) x = fb_char(x,y,*s++,fg,bg,sc); return x; }
 
-/**
+/*
  * @brief Computes the rendered pixel width of a string.
  *
  * Each character occupies 6 scaled pixels (5 glyph columns + 1 spacing).
@@ -423,7 +439,7 @@ int fb_str(int x, int y, const char *s, uint16_t fg, uint16_t bg, int sc)
 int fb_strw(const char *s, int sc)
 { return (int)strlen(s) * 6 * sc; }
 
-/**
+/*
  * @brief Renders a string horizontally centered on the display.
  *
  * @param y  Y coordinate.
@@ -435,7 +451,7 @@ int fb_strw(const char *s, int sc)
 void fb_str_c(int y, const char *s, uint16_t fg, uint16_t bg, int sc)
 { fb_str((DISP_W - fb_strw(s,sc))/2, y, s, fg, bg, sc); }
 
-/**
+/*
  * @brief Draws a labeled button and checks for a tap inside it.
  *
  * Renders a filled rectangle with a border and centered label text,
@@ -463,7 +479,7 @@ int ui_button(int x, int y, int w, int h, const char *lbl,
  * STATUS SCREEN
  * ========================================================================== */
 
-/**
+/*
  * @brief Renders the system status screen.
  *
  * Draws the header, current time, Modbus and MQTT connection indicators,
