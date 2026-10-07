@@ -15,10 +15,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_enqueue_list_remove(queue_dir):
-    path = q.enqueue("GW-1", "csv-content")
+    path = q.enqueue("GW-1", "csv-content", '{"device": {}}')
     assert path.startswith(str(queue_dir))
     (item,) = q.list_queued()
-    assert (item.device_id, item.csv_content, item.filepath) == ("GW-1", "csv-content", path)
+    assert (item.device_id, item.csv_content, item.json_content, item.filepath) == (
+        "GW-1", "csv-content", '{"device": {}}', path)
     q.remove(path)
     assert q.list_queued() == []
     q.remove(path)   # removing twice is harmless
@@ -40,22 +41,30 @@ def test_listed_oldest_first(queue_dir, monkeypatch):
     assert [i.csv_content for i in q.list_queued()] == ["first", "second"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: queue files are named <device_id>__<unix seconds>.json, so a second push to the same "
-    "device in the same second overwrites the first one"))
 def test_two_pushes_in_one_second_both_kept(queue_dir, monkeypatch):
+    """Regression: files were named <device_id>__<unix seconds>.json, so a second push to
+    the same device in the same second overwrote the first."""
     monkeypatch.setattr(q, "time", FakeClock())
     q.enqueue("GW-1", "first")
     q.enqueue("GW-1", "second")
-    assert len(q.list_queued()) == 2
+    assert [i.csv_content for i in q.list_queued()] == ["first", "second"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the queue keeps only the CSV and 'Retry Pending Queue' re-sends only the CSV, but the "
-    "firmware reads smart_rtu_config.json"))
 def test_queued_entry_keeps_the_json_the_firmware_reads(queue_dir):
-    path = q.enqueue("GW-1", "csv-content")
-    assert "json_content" in json.loads(open(path).read())
+    """Regression: only the CSV was queued and re-sent, but the firmware reads the JSON."""
+    path = q.enqueue("GW-1", "csv-content", '{"device": {}}')
+    assert json.loads(open(path).read())["json_content"] == '{"device": {}}'
+
+
+def test_entries_from_older_tool_versions_still_listed_in_order(queue_dir, monkeypatch):
+    queue_dir.mkdir(exist_ok=True)
+    (queue_dir / "GW-1__1000.json").write_text(json.dumps(
+        {"device_id": "GW-1", "csv_content": "old", "queued_at": 1000}))
+    clock = FakeClock()
+    monkeypatch.setattr(q, "time", clock)
+    q.enqueue("GW-1", "new", "{}")
+    items = q.list_queued()
+    assert [(i.csv_content, i.json_content) for i in items] == [("old", ""), ("new", "{}")]
 
 
 def test_credentials_saved_read_and_cleared(memory_keyring):

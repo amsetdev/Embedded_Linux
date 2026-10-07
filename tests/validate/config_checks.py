@@ -71,15 +71,24 @@ def check_schema(cfg):
     return problems
 
 
+# Defaults built from the device ID (settings.c: OTA_*_TOPIC_DEF "devices/%s/ota/...").
+DEVICE_ID_DEFAULTS = ("ota.app_topic", "ota.system_topic", "ota.status_topic")
+
+
 def _expected_fields(cfg):
     """What every firmware field should be: the file's value, or the default when absent."""
     expected = {}
     defaults = firmware_defaults()["fields"]
+    default_id = defaults["device.device_id"]["value"]
+    device = cfg.get("device") if isinstance(cfg.get("device"), dict) else {}
+    device_id = device.get("device_id", default_id)
     for path, default in defaults.items():
         section, key = path.split(".", 1)
         sec = cfg.get(section)
         if isinstance(sec, dict) and key in sec:
             expected[path] = sec[key]
+        elif path in DEVICE_ID_DEFAULTS and isinstance(device_id, str):
+            expected[path] = default["value"].replace(f"/{default_id}/", f"/{device_id}/")
         else:
             expected[path] = default["value"]
     return expected

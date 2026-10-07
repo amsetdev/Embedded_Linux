@@ -8,6 +8,7 @@
 
 #include "payload.h"
 
+#include <math.h>
 #include <stdio.h>
 
 /* Documented in payload.h. */
@@ -36,11 +37,18 @@ int payload_build(char *buf, size_t buflen, long long ts_ms,
             break;
 
         case 'f':
-            pos += snprintf(buf + pos,
-                            buflen - pos,
-                            "\"%s\":%.2f",
-                            points[i].label,
-                            points[i].float_value);
+            /* NaN/Inf have no JSON form: "nan" would make the whole message invalid. */
+            if (isfinite(points[i].float_value))
+                pos += snprintf(buf + pos,
+                                buflen - pos,
+                                "\"%s\":%.2f",
+                                points[i].label,
+                                points[i].float_value);
+            else
+                pos += snprintf(buf + pos,
+                                buflen - pos,
+                                "\"%s\":null",
+                                points[i].label);
             break;
 
         default:

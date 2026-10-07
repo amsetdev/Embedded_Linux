@@ -29,8 +29,9 @@ def transport():
     return MQTTTransport("broker.example", 8883, "user", "pw")
 
 
-def ack_with(points_loaded):
-    return lambda payload: ("amset/GW-1/config/ack", json.dumps({"points_loaded": points_loaded}).encode())
+def ack_with(status, registers=3, **extra):
+    return lambda payload: ("amset/GW-1/config/ack",
+                            json.dumps({"status": status, "registers": registers, **extra}).encode())
 
 
 def test_connection_ok_uses_tls_and_credentials(broker, transport):
@@ -44,6 +45,14 @@ def test_connection_ok_uses_tls_and_credentials(broker, transport):
 def test_no_tls_when_disabled(broker):
     MQTTTransport("b", 1883, "u", "p", use_tls=False).test_connection()
     assert broker.clients[0].tls is None
+
+
+def test_client_certificate_auth_for_aws_iot(broker):
+    MQTTTransport("x-ats.iot.example", 8883, "", "", ca_certs="/c/ca.pem",
+                  certfile="/c/dev.crt", keyfile="/c/dev.key").test_connection()
+    c = broker.clients[0]
+    assert c.credentials is None                     # no username/password with mTLS
+    assert (c.tls["ca_certs"], c.tls["certfile"], c.tls["keyfile"]) == ("/c/ca.pem", "/c/dev.crt", "/c/dev.key")
 
 
 @pytest.mark.parametrize("rc, text", [(4, "bad credentials"), (5, "not authorised"), (3, "broker unavailable")])
@@ -62,11 +71,24 @@ def test_connack_timeout(broker, transport, monkeypatch):
 
 
 def test_push_text_succeeds_only_with_ack(broker, transport):
-    broker.responders["amset/GW-1/config/set"] = ack_with(42)
-    r = transport.push_text("csv", "amset/GW-1/config/set", ack_topic="amset/GW-1/config/ack")
-    assert r.ok and "42" in r.message and r.ack_payload == {"points_loaded": 42}
+    broker.responders["amset/GW-1/config/set"] = ack_with("saved", 42)
+    r = transport.push_text("{}", "amset/GW-1/config/set", ack_topic="amset/GW-1/config/ack")
+    assert r.ok and "42 registers" in r.message and r.ack_payload["status"] == "saved"
     (_, topic, payload, qos, retain) = broker.published[0]
-    assert (topic, payload, qos, retain) == ("amset/GW-1/config/set", b"csv", 1, True)
+    assert (topic, payload, qos, retain) == ("amset/GW-1/config/set", b"{}", 1, True)
+
+
+def test_unchanged_ack_is_success(broker, transport):
+    broker.responders["amset/GW-1/config/set"] = ack_with("unchanged")
+    r = transport.push_text("{}", "amset/GW-1/config/set", ack_topic="amset/GW-1/config/ack")
+    assert r.ok and "already up to date" in r.message
+
+
+@pytest.mark.parametrize("status", ["rejected", "error"])
+def test_rejected_or_failed_ack_is_failure(broker, transport, status):
+    broker.responders["amset/GW-1/config/set"] = ack_with(status, error="not_a_config")
+    r = transport.push_text("{}", "amset/GW-1/config/set", ack_topic="amset/GW-1/config/ack")
+    assert not r.ok and status in r.message and "not_a_config" in r.message
 
 
 def test_push_text_without_ack_fails_but_stays_retained(broker, transport):
@@ -81,11 +103,13 @@ def test_non_json_ack_still_counts(broker, transport):
     assert r.ok and r.ack_payload == {"raw": "OK"}
 
 
-def test_push_combined_config_sends_csv_and_json(broker, transport):
-    broker.responders["amset/GW-1/config/set"] = ack_with(1)
+def test_push_combined_config_sends_the_json_the_firmware_reads(broker, transport):
+    """Regression: the CSV went to config/set (and the JSON to set.json after the ack wait),
+    while the firmware reads the JSON (inc/config_push.h)."""
+    broker.responders["amset/GW-1/config/set"] = ack_with("saved", 1)
     r = transport.push_combined_config("GW-1", "csv-data", '{"j": 1}')
     assert r.ok
-    assert broker.retained == {"amset/GW-1/config/set": b"csv-data", "amset/GW-1/config/set.json": b'{"j": 1}'}
+    assert broker.retained == {"amset/GW-1/config/set": b'{"j": 1}'}
 
 
 def test_read_text_returns_retained(broker, transport):

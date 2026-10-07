@@ -65,13 +65,30 @@ def test_data_type_synonyms(xlsx, raw, expected):
     assert points[0].data_type == expected
 
 
-@pytest.mark.parametrize("raw", ["INT16", "int16", "Signed Int16"])
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: any data type containing 'int' becomes int32, so a vendor 'INT16' register is read as "
-    "two registers (wrong value, and it overlaps the next register)"))
+@pytest.mark.parametrize("raw", ["INT16", "int16", "Signed Int16", "INT", "SHORT"])
 def test_int16_not_imported_as_int32(xlsx, raw):
-    points, _ = import_excel(xlsx([["Label", "Address", "Data Type"], ["P", 1, raw]]))
-    assert points[0].data_type != "int32"
+    """Regression: any type containing "int" became int32, so a vendor INT16 register was
+    read as two registers (wrong value, overlapping the next register)."""
+    points, warnings = import_excel(xlsx([["Label", "Address", "Data Type"], ["P", 1, raw]]))
+    assert points[0].data_type == "uint16"
+    assert len(warnings) == 1 and "negative values read as 65536 + value" in warnings[0]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("UINT", "uint16"), ("WORD", "uint16"), ("UINT16", "uint16"),
+    ("DINT", "int32"), ("INT32", "int32"), ("Long", "int32"),
+    ("REAL", "float32"), ("Single", "float32"),
+])
+def test_iec_61131_type_names(xlsx, raw, expected):
+    points, warnings = import_excel(xlsx([["Label", "Address", "Data Type"], ["P", 1, raw]]))
+    assert points[0].data_type == expected and warnings == []
+
+
+@pytest.mark.parametrize("raw", ["UDINT", "DWORD", "uint32"])
+def test_unsigned_32bit_imported_with_warning(xlsx, raw):
+    points, warnings = import_excel(xlsx([["Label", "Address", "Data Type"], ["P", 1, raw]]))
+    assert points[0].data_type == "int32"
+    assert "above 2147483647 read as negative" in warnings[0]
 
 
 def test_unknown_types_default_with_one_warning_each(xlsx):

@@ -53,6 +53,38 @@ _HEADER_ALIASES = {
 }
 
 
+# Vendor / IEC 61131 data type names -> firmware data type. 16-bit types must
+# stay 16-bit: reading them as int32 takes two registers (wrong value, overlap).
+_TYPE_16 = {"int", "uint", "word", "short", "ushort", "int16", "uint16", "sint16",
+            "s16", "u16", "signedint16", "unsignedint16", "signed16", "unsigned16", "16bit"}
+_TYPE_32 = {"dint", "udint", "dword", "long", "ulong", "int32", "uint32", "sint32",
+            "s32", "u32", "signedint32", "unsignedint32", "signed32", "unsigned32", "32bit"}
+_TYPE_FLOAT = {"real", "float", "float32", "single", "fp32", "ieee754"}
+_SIGNED_16 = {"int", "short", "int16", "sint16", "s16", "signedint16", "signed16"}
+_UNSIGNED_32 = {"udint", "dword", "ulong", "uint32", "u32", "unsignedint32", "unsigned32"}
+
+
+def map_data_type(raw: str):
+    """Returns (data_type or None, warning or None) for a sheet's data type text."""
+    dt = str(raw).strip().lower()
+    if dt in VALID_DATA_TYPES:
+        return dt, None
+    compact = dt.replace(" ", "").replace("_", "").replace("-", "")
+    if compact in _TYPE_FLOAT or "float" in compact or "real" in compact:
+        return "float32", None
+    if compact in _TYPE_16 or (compact not in _TYPE_32 and "16" in compact):
+        if compact in _SIGNED_16 or compact.startswith("signed"):
+            return "uint16", (f"signed 16-bit type '{raw}' imported as uint16 (the firmware has no "
+                              f"int16): negative values read as 65536 + value")
+        return "uint16", None
+    if compact in _TYPE_32 or "32" in compact:
+        if compact in _UNSIGNED_32 or compact.startswith("unsigned"):
+            return "int32", (f"unsigned 32-bit type '{raw}' imported as int32: values above "
+                             f"2147483647 read as negative")
+        return "int32", None
+    return None, None
+
+
 def _normalize_header(h: str) -> str:
     return str(h).strip().lower()
 
@@ -157,15 +189,11 @@ def import_excel(filepath: str, sheet_name=0) -> Tuple[List[RegisterPoint], List
         if "data_type" in colmap:
             raw = row.get(colmap["data_type"])
             if not pd.isna(raw) and str(raw).strip():
-                dt = str(raw).strip().lower()
-                if dt in VALID_DATA_TYPES:
-                    data_type = dt
-                elif "float" in dt:
-                    data_type = "float32"
-                elif "int" in dt or "32" in dt:
-                    data_type = "int32"
-                elif dt in ("word", "uint16", "u16"):
-                    data_type = "uint16"
+                mapped, note = map_data_type(raw)
+                if mapped:
+                    data_type = mapped
+                    if note:
+                        warnings.append(f"Row {excel_row_num} ({label}): {note}")
                 else:
                     warnings.append(
                         f"Row {excel_row_num} ({label}): unrecognized "

@@ -90,6 +90,8 @@ def _make_transport(mode, conn_params):
         return MQTTTransport(
             broker=conn_params["broker"], port=conn_params["port"],
             username=conn_params["username"], password=conn_params["password"],
+            ca_certs=conn_params.get("ca_certs", ""), certfile=conn_params.get("certfile", ""),
+            keyfile=conn_params.get("keyfile", ""),
         )
     if mode == "ssh":
         return SSHTransport(
@@ -153,7 +155,7 @@ class PushWorker(QThread):
                 if result.ok:
                     self.finished_ok.emit(cert_msg + result.message)
                 else:
-                    offline_queue.enqueue(self.config.device_id, csv_content)
+                    offline_queue.enqueue(self.config.device_id, csv_content, json_content)
                     self.finished_fail.emit(cert_msg + result.message + "\n\nConfig queued locally for retry.")
 
             elif self.mode == "ssh":
@@ -307,16 +309,16 @@ class RetryQueueWorker(QThread):
         self.conn_params = conn_params
 
     def run(self):
-        transport = MQTTTransport(
-            self.conn_params["broker"], self.conn_params["port"],
-            self.conn_params["username"], self.conn_params["password"],
-        )
+        transport = _make_transport("mqtt", self.conn_params)
         results = []
         for item in offline_queue.list_queued():
-            r = transport.push_text(
-                item.csv_content,
-                f"amset/{item.device_id}/config/set",
-                ack_topic=f"amset/{item.device_id}/config/ack",
+            if not item.json_content:
+                results.append(f"{item.device_id}: still pending (queued by an older tool version "
+                               f"without the JSON config; push it again)")
+                continue
+            r = transport.push_combined_config(
+                item.device_id, item.csv_content, item.json_content,
+                wait_ack_seconds=self.conn_params.get("ack_timeout", 15),
             )
             if r.ok:
                 offline_queue.remove(item.filepath)
@@ -376,9 +378,17 @@ class DeviceConfigPage(QWidget):
         self.wifi_show_chk.toggled.connect(
             lambda on: self.wifi_pass_edit.setEchoMode(QLineEdit.Normal if on else QLineEdit.Password)
         )
+        self.wifi_enable_chk = QCheckBox("Wi-Fi enabled")
+        self.wifi_enable_chk.setChecked(True)
+        self.wifi_enable_chk.setToolTip("Untick to keep the board's Wi-Fi off (wifi.enable = 0).")
+        self.wifi_country_edit = QLineEdit("IN")
+        self.wifi_country_edit.setMaxLength(2)
+        self.wifi_country_edit.setToolTip("Two-letter regulatory country code, e.g. IN.")
+        wifi_form.addRow("", self.wifi_enable_chk)
         wifi_form.addRow("SSID:", self.wifi_ssid_edit)
         wifi_form.addRow("Password:", self.wifi_pass_edit)
         wifi_form.addRow("", self.wifi_show_chk)
+        wifi_form.addRow("Country:", self.wifi_country_edit)
         note = QLabel("Leave blank if using a USB/cellular dongle or Ethernet.")
         note.setObjectName("hintLabel"); note.setWordWrap(True)
         wifi_form.addRow(note)
@@ -478,6 +488,8 @@ class DeviceConfigPage(QWidget):
         config.stop_bits = int(self.stop_bits_combo.currentText())
         config.wifi_ssid = self.wifi_ssid_edit.text().strip()
         config.wifi_password = self.wifi_pass_edit.text()
+        config.wifi_enable = 1 if self.wifi_enable_chk.isChecked() else 0
+        config.wifi_country = self.wifi_country_edit.text().strip().upper() or "IN"
         config.modbus_tcp_enable = 1 if self.tcp_enable_chk.isChecked() else 0
         config.modbus_tcp_ip = self.tcp_ip_edit.text().strip()
         config.modbus_tcp_port = self.tcp_port_spin.value()
@@ -493,6 +505,8 @@ class DeviceConfigPage(QWidget):
         self.stop_bits_combo.setCurrentText(str(config.stop_bits))
         self.wifi_ssid_edit.setText(config.wifi_ssid)
         self.wifi_pass_edit.setText(config.wifi_password)
+        self.wifi_enable_chk.setChecked(config.wifi_enable == 1)
+        self.wifi_country_edit.setText(config.wifi_country)
         self.tcp_enable_chk.setChecked(config.modbus_tcp_enable == 1)
         self.tcp_ip_edit.setText(config.modbus_tcp_ip)
         self.tcp_port_spin.setValue(config.modbus_tcp_port)
@@ -772,9 +786,18 @@ class DataTransmissionPage(QWidget):
         self.mqtt_remember_chk = QCheckBox("Remember password (OS keyring)")
         form.addRow("Broker:", self.mqtt_broker_edit)
         form.addRow("Port:", self.mqtt_port_spin)
+        self.mqtt_ca_edit = QLineEdit()
+        self.mqtt_ca_edit.setPlaceholderText("optional: CA file (system CAs if empty)")
+        self.mqtt_certfile_edit = QLineEdit()
+        self.mqtt_certfile_edit.setPlaceholderText("optional: client certificate (AWS IoT)")
+        self.mqtt_keyfile_edit = QLineEdit()
+        self.mqtt_keyfile_edit.setPlaceholderText("optional: client private key (AWS IoT)")
         form.addRow("Username:", self.mqtt_user_edit)
         form.addRow("Password:", self.mqtt_pass_edit)
         form.addRow("", self.mqtt_remember_chk)
+        form.addRow("CA file:", self.mqtt_ca_edit)
+        form.addRow("Client cert:", self.mqtt_certfile_edit)
+        form.addRow("Client key:", self.mqtt_keyfile_edit)
         note = QLabel("Recommended for field/production — works through USB/cellular dongles and NAT.")
         note.setObjectName("hintLabel"); note.setWordWrap(True)
         form.addRow(note)
@@ -1017,6 +1040,9 @@ class DataTransmissionPage(QWidget):
         if mode == "mqtt":
             return {"broker": self.mqtt_broker_edit.text().strip(), "port": self.mqtt_port_spin.value(),
                     "username": self.mqtt_user_edit.text().strip(), "password": self.mqtt_pass_edit.text(),
+                    "ca_certs": self.mqtt_ca_edit.text().strip(),
+                    "certfile": self.mqtt_certfile_edit.text().strip(),
+                    "keyfile": self.mqtt_keyfile_edit.text().strip(),
                     "ack_timeout": 15}
         if mode == "ssh":
             return {"host": self.ssh_host_edit.text().strip(), "username": self.ssh_user_edit.text().strip(),

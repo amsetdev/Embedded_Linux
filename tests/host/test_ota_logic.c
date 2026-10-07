@@ -6,12 +6,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "known_issue.h"
 #include "ota_logic.h"
 #include "unity.h"
 
 #define APP_T "devices/GW-1/ota/app"
 #define SYS_T "devices/GW-1/ota/system"
+#define SHA "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -22,12 +22,12 @@ static void test_app_request_parsed(void)
 {
     ota_request_t r;
     TEST_ASSERT_EQUAL_INT(OTA_REQ_OK, ota_parse_request(APP_T,
-        "{\"url\":\"https://s3.example/main?X-Amz=1\",\"version\":\"1.2.0\",\"sha256\":\"ab12\"}",
+        "{\"url\":\"https://s3.example/main?X-Amz=1\",\"version\":\"1.2.0\",\"sha256\":\"" SHA "\"}",
         APP_T, SYS_T, &r));
     TEST_ASSERT_EQUAL_INT(OTA_TYPE_APP, r.type);
     TEST_ASSERT_EQUAL_STRING("https://s3.example/main?X-Amz=1", r.url);
     TEST_ASSERT_EQUAL_STRING("1.2.0", r.version);
-    TEST_ASSERT_EQUAL_STRING("ab12", r.sha256);
+    TEST_ASSERT_EQUAL_STRING(SHA, r.sha256);
     TEST_ASSERT_EQUAL_INT(0, r.pending);
 }
 
@@ -56,32 +56,61 @@ static void test_missing_url(void)
 
 static void test_non_https_url_rejected(void)
 {
+    /* Regression: any scheme was accepted, and libcurl also downloads file://, http://, ftp://. */
     ota_request_t r;
-    ota_parse_result_t res = ota_parse_request(APP_T, "{\"url\":\"file:///etc/shadow\",\"sha256\":\"\"}", APP_T, SYS_T, &r);
-    KNOWN_ISSUE(res != OTA_REQ_OK,
-                "any URL scheme is accepted: libcurl also downloads file://, http://, ftp:// "
-                "(only https:// should be)");
+    const char *bad[] = { "file:///etc/shadow", "http://x/main", "ftp://x/main", "//x/main" };
+    for (int i = 0; i < 4; i++) {
+        char payload[200];
+        snprintf(payload, sizeof(payload), "{\"url\":\"%s\",\"sha256\":\"" SHA "\"}", bad[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(OTA_REQ_BAD_URL, ota_parse_request(APP_T, payload, APP_T, SYS_T, &r), bad[i]);
+    }
+    TEST_ASSERT_EQUAL_INT(OTA_REQ_OK, ota_parse_request(APP_T, "{\"url\":\"HTTPS://x/main\",\"sha256\":\"" SHA "\"}", APP_T, SYS_T, &r));
+    TEST_ASSERT_EQUAL_STRING("invalid_url", ota_parse_error(OTA_REQ_BAD_URL));
 }
 
 static void test_long_presigned_url_not_truncated(void)
 {
-    static char payload[1200], url[1100];
+    /* Regression: url[512] silently cut longer S3 pre-signed URLs. */
+    static char payload[6000], url[5000];
     memset(url, 'a', sizeof(url) - 1);
     memcpy(url, "https://", 8);
-    url[sizeof(url) - 1] = '\0';
-    snprintf(payload, sizeof(payload), "{\"url\":\"%s\"}", url);
+    url[1099] = '\0';                                    /* 1099 characters: fits */
+    snprintf(payload, sizeof(payload), "{\"url\":\"%s\",\"sha256\":\"" SHA "\"}", url);
     ota_request_t r;
-    ota_parse_result_t res = ota_parse_request(APP_T, payload, APP_T, SYS_T, &r);
-    KNOWN_ISSUE(res != OTA_REQ_OK || strcmp(r.url, url) == 0,
-                "url[512]: a longer S3 pre-signed URL is silently truncated and the download fails");
+    TEST_ASSERT_EQUAL_INT(OTA_REQ_OK, ota_parse_request(APP_T, payload, APP_T, SYS_T, &r));
+    TEST_ASSERT_EQUAL_STRING(url, r.url);
+
+    url[1099] = 'a';
+    url[sizeof(r.url)] = '\0';                           /* one more than fits: rejected, not cut */
+    snprintf(payload, sizeof(payload), "{\"url\":\"%s\",\"sha256\":\"" SHA "\"}", url);
+    TEST_ASSERT_EQUAL_INT(OTA_REQ_URL_TOO_LONG, ota_parse_request(APP_T, payload, APP_T, SYS_T, &r));
 }
 
 static void test_escaped_slashes_in_url(void)
 {
+    /* Regression: JSON escapes such as \/ were not decoded. */
     ota_request_t r;
-    ota_parse_request(APP_T, "{\"url\":\"https:\\/\\/s3.example\\/main\"}", APP_T, SYS_T, &r);
-    KNOWN_ISSUE(strcmp(r.url, "https://s3.example/main") == 0,
-                "JSON escapes (e.g. \\/ written by some encoders) are not decoded");
+    ota_parse_request(APP_T, "{\"url\":\"https:\\/\\/s3.example\\/main\",\"sha256\":\"" SHA "\"}", APP_T, SYS_T, &r);
+    TEST_ASSERT_EQUAL_STRING("https://s3.example/main", r.url);
+}
+
+static void test_app_request_needs_valid_sha256(void)
+{
+    /* Regression: an app command without sha256 was installed unverified. */
+    ota_request_t r;
+    const char *bad[] = {
+        "{\"url\":\"https://x/m\"}",
+        "{\"url\":\"https://x/m\",\"sha256\":\"\"}",
+        "{\"url\":\"https://x/m\",\"sha256\":\"9f86d081\"}",
+        "{\"url\":\"https://x/m\",\"sha256\":\"zz86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"}",
+        "{\"url\":\"https://x/m\",\"sha256\":\"" SHA "00\"}",
+    };
+    for (int i = 0; i < 5; i++)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(OTA_REQ_BAD_SHA256, ota_parse_request(APP_T, bad[i], APP_T, SYS_T, &r), bad[i]);
+    TEST_ASSERT_EQUAL_STRING("invalid_sha256", ota_parse_error(OTA_REQ_BAD_SHA256));
+    TEST_ASSERT_NULL(ota_parse_error(OTA_REQ_MISSING_URL));
+    /* a system update (swupdate checks its own image) needs none */
+    TEST_ASSERT_EQUAL_INT(OTA_REQ_OK, ota_parse_request(SYS_T, "{\"url\":\"https://x/u.swu\"}", APP_T, SYS_T, &r));
 }
 
 /* --------------------------------------------------------- status message */
@@ -242,12 +271,13 @@ static void test_replace_failure_restores_backup(void)
 
 static void test_update_without_sha256_not_installed(void)
 {
+    /* Regression: an empty sha256 skipped verification and installed the download. */
     reset_app();
     ota_request_t r = app_req("");
-    int installed = ota_apply_app(&aops, &r, "/tmp/ota", "/app/main");
-    KNOWN_ISSUE(installed == 0 || af.verifies == 1,
-                "an app OTA command without \"sha256\" skips verification and installs the "
-                "download unchecked");
+    TEST_ASSERT_EQUAL_INT(0, ota_apply_app(&aops, &r, "/tmp/ota", "/app/main"));
+    TEST_ASSERT_EQUAL_INT(1, af.n);
+    TEST_ASSERT_EQUAL_STRING("report FAILED sha256_missing", af.log[0]);
+    TEST_ASSERT_EQUAL_INT(0, af.renames);
 }
 
 int main(void)
@@ -260,6 +290,7 @@ int main(void)
     RUN_TEST(test_non_https_url_rejected);
     RUN_TEST(test_long_presigned_url_not_truncated);
     RUN_TEST(test_escaped_slashes_in_url);
+    RUN_TEST(test_app_request_needs_valid_sha256);
     RUN_TEST(test_status_json);
     RUN_TEST(test_names);
     RUN_TEST(test_digest_matches_case_insensitive);

@@ -26,11 +26,11 @@ what only hardware can show.
 
 | Layer | Folder | CI job | Needs | Time | Count |
 |---|---|---|---|---|---|
-| Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 66 tests + 7 known issues |
+| Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 77 tests |
 | Compiler warnings | `tests/static/warnings_gate.py` | `compiler-warnings` | a clean build log | seconds | 1 gate |
-| Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 121 tests + 8 known issues |
-| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (59 accepted findings; 0 doc warnings) |
-| Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | ~30 s | 6 binaries, 67 tests (9 known issues) |
+| Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 163 tests |
+| cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (50 accepted findings; 0 doc warnings) |
+| Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | ~30 s | 7 binaries, 83 tests |
 | Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
 
 `pytest` markers (`tests/pytest.ini`, `--strict-markers`) select the layers:
@@ -79,11 +79,10 @@ seconds, before the build.
 
 ### 3.1 How: the real firmware parser on the PC
 
-The firmware's JSON reader (`src/util/json.c`) looks each key up with `strstr()`
-from the start of its section **to the end of the file**. A missing key is therefore
-not "missing" but read from whatever comes later; strings stop at the first `"`;
-numbers go through `atoi()`. Re-implementing that in Python would drift, so the
-tests run **the firmware's own code**:
+The firmware's JSON reader (`src/util/json.c`) is hand-written: numbers go through
+`atoi()`, strings are cut to their buffer, and before the bug-fix pass a missing key
+was read from a later section. Re-implementing it in Python would drift, so the tests
+run **the firmware's own code**:
 
 | File | Role |
 |---|---|
@@ -97,8 +96,8 @@ tests run **the firmware's own code**:
 | File | What it checks |
 |---|---|
 | `test_config_files.py` | Every `configs/**/*.json`, root `smart_rtu_config*.json` and `tests/fixtures/configs/*.json` passes schema + rules + the firmware-read comparison; the schema itself is valid JSON Schema 2020-12; the known-good fixture exists. |
-| `test_negative_configs.py` | 41 broken variants of `full_config.json` that must be rejected with a specific message, e.g. `wifi_enable_missing_read_from_modbus_tcp`, `register_slave_id_missing_taken_from_next`, `label_with_quote`, `label_utf8_64_bytes` (32 × `é`), `baud_as_string` (`atoi("\"9600\"")` = 0), `enable_as_bool`, `overlap_float_second_half`, `int32_at_65535`, `float_on_coil`, `topic_8_slashes`, `too_many_registers_2001`, `telemetry_too_large`. Plus 10 "must be allowed" cases: same address on another slave / table, exactly 2000 registers, a 63-byte label, no `ota`/`watchdog` sections, a register without `slave_id` when no later register has one. |
-| `test_tool_contract.py` | Configs built with the tool's `DeviceConfig` (the code behind "Send to device"): all register/data types read correctly by the firmware; the CSV export carries the same content as the JSON. Strict known issues: Wi-Fi disabled with Modbus TCP, default-slave registers polled from the next register's slave, OTA topics fixed to `AMSET-001`, the tool's own validation too weak (3 cases). Also proves the rules reject those 3 cases. |
+| `test_negative_configs.py` | 39 broken variants of `full_config.json` that must be rejected with a specific message, e.g. `label_with_quote`, `label_utf8_64_bytes` (32 × `é`), `baud_as_string` (`atoi("\"9600\"")` = 0), `enable_as_bool`, `overlap_float_second_half`, `int32_at_65535`, `float_on_coil`, `topic_8_slashes`, `too_many_registers_2001`, `telemetry_too_large`. Plus 12 "must be allowed" cases: same address on another slave / table, exactly 2000 registers, a 63-byte label, no `ota`/`watchdog` sections, and the regressions `wifi_without_enable_keeps_default` / `register_without_slave_id_uses_device_slave` (a missing key keeps its default instead of being read from a later section). |
+| `test_tool_contract.py` | Configs built with the tool's `DeviceConfig` (the code behind "Send to device"): all register/data types read correctly by the firmware; the CSV export carries the same content as the JSON. Regressions: Wi-Fi stays enabled with Modbus TCP off (and can be disabled); default-slave registers polled from the device's slave (tool and firmware side); OTA topics follow the device ID (an `ota` section still overrides); escaped strings read like JSON; the tool rejects labels > 63 bytes / with `"` and overlapping registers; firmware and tool agree on the MQTT config topics. |
 | `test_type_consistency.py` | `RegType` order in `inc/data.h`, the names `reg_type_from_string()` / `data_type_from_string()` recognise, the tool's `VALID_*` sets and UI dropdowns, the schema enums, and the codes the **real parser** produces for every (type, data_type) pair all agree. |
 
 **Adding a device config**: put it in `configs/` (one file per device). CI validates it.
@@ -194,20 +193,20 @@ Open ones are strict xfails (they fail once fixed, then become regressions).
 
 | Bug | Status | Guarded by |
 |---|---|---|
-| Wi-Fi disabled whenever Modbus TCP is disabled (tool omits `wifi.enable`) | open | `test_tool_contract.py::test_wifi_stays_enabled_when_modbus_tcp_disabled`, negative `wifi_enable_missing_read_from_modbus_tcp` |
-| Register on the default slave polled from the next register's slave | open | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave`, negative `register_slave_id_missing_taken_from_next` |
-| All gateways use OTA topics `devices/AMSET-001/ota/*` | open | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
-| Tool accepts labels the firmware truncates/misparses, overlapping 32-bit registers | open | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` |
-| MQTT delivery: firmware doesn't subscribe to the tool's config topic | open | `test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
-| Serial delivery: JSON not written (heredoc never ends) but reported as success | open | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success` |
-| Serial Read returns the echoed command, not the file | open | `test_serial_transport.py::test_read_text_with_echo` |
-| Excel `INT16` imported as `int32` | open | `test_excel_import.py::test_int16_not_imported_as_int32` |
-| Offline queue overwrites same-second pushes; keeps only the CSV | open | `test_offline_queue_credentials.py` (2 tests) |
-| OTA app update installed unverified when `sha256` is missing | open | `test_ota_logic.c::test_update_without_sha256_not_installed` |
-| OTA accepts any URL scheme; long URLs cut; `\/` not decoded | open | `test_ota_logic.c` (3 tests) |
-| Telemetry `"x":nan` (invalid JSON) for NaN floats | open | `test_payload.c::test_nan_float_gives_valid_json` |
-| Offline files overwritten within one second; deleted without broker confirmation; backlog never drains | open | `test_store_forward.c` (3 tests) |
-| `json.c` doesn't unescape `\"` | open | `test_json.c::test_escaped_quote_in_value` |
+| Wi-Fi disabled whenever Modbus TCP is disabled (tool omitted `wifi.enable`, firmware read the next section) | fixed | `test_tool_contract.py::test_wifi_stays_enabled_when_modbus_tcp_disabled`, ALLOWED `wifi_without_enable_keeps_default`, `test_register_model.py::test_wifi_enable_and_country_written` |
+| Register on the default slave polled from the next register's slave | fixed | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave`, `::test_firmware_uses_device_slave_when_register_slave_missing`, `test_register_model.py::test_register_slave_id_always_written` |
+| All gateways used OTA topics `devices/AMSET-001/ota/*` | fixed | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
+| Tool accepted labels the firmware cuts/misparses and overlapping 32-bit registers | fixed | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles`, `test_register_model.py` |
+| MQTT delivery: firmware didn't subscribe to the tool's config topic; tool sent the CSV | fixed | `test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic`, `test_config_push.c`, `test_mqtt_transport.py::test_push_combined_config_sends_the_json_the_firmware_reads` |
+| Serial delivery: JSON not written (heredoc never ended) but reported as success | fixed | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success` |
+| Serial Read returned the echoed command | fixed | `test_serial_transport.py::test_read_text_with_echo` |
+| Excel `INT16` imported as `int32` | fixed | `test_excel_import.py::test_int16_not_imported_as_int32` |
+| Tool offline queue overwrote same-second pushes; kept only the CSV | fixed | `test_offline_queue_credentials.py` (2 tests), `test_workers.py::test_retry_queue_sends_json_and_removes_only_delivered` |
+| OTA app update installed unverified without `sha256` | fixed | `test_ota_logic.c::test_app_request_needs_valid_sha256`, `::test_update_without_sha256_not_installed` |
+| OTA accepted any URL scheme; long URLs cut; `\/` not decoded | fixed | `test_ota_logic.c::test_non_https_url_rejected`, `::test_long_presigned_url_not_truncated`, `::test_escaped_slashes_in_url` |
+| Telemetry `"x":nan` (invalid JSON); `(int)NaN` undefined behaviour | fixed | `test_payload.c::test_nan_float_gives_valid_json`, `test_data_read.c::test_nan_and_huge_float_converted_without_ub` |
+| Offline files overwritten within one second; deleted without broker confirmation; backlog never drained | fixed | `test_store_forward.c::test_two_stores_in_one_second_both_kept`, `::test_file_kept_when_publish_not_confirmed`, `::test_backlog_drains` |
+| `json.c` didn't unescape `\"` | fixed | `test_json.c::test_escaped_quote_in_value`, `test_tool_contract.py::test_escaped_strings_read_like_json` |
 
 ---
 
@@ -234,13 +233,13 @@ real hardware, network or your keyring: see the safety notes in
 
 | File | What it checks |
 |---|---|
-| `test_register_model.py` | Point validation edges (label, address 0–65535, slave 0–247, types); `validate_all()` reports every bad row and exact duplicates, but not the same address on another slave; the combined config has every section the firmware reads; `slave_id` omitted for "device default"; JSON/CSV files; **project file round trip of every field**; older project files; ESP32 NVS export import. |
-| `test_excel_import.py` | Minimal Label/Address sheet; header aliases; missing required column is an error; register/data type synonyms; unknown types default with one warning each; bad rows skipped with the right Excel row numbers; blank rows ignored; imported points valid. Known issue: `INT16` → `int32`. |
+| `test_register_model.py` | Point validation edges (label, address 0–65535, slave 0–247, types, 32-bit limits); label bytes and `"`/`\\`; `validate_all()` reports every bad row, overlapping 32-bit registers (device default slave counted), duplicate labels, but not the same address on another slave / table; `wifi.enable`/`country` and every `slave_id` written; the combined config has every section the firmware reads; `slave_id` omitted for "device default"; JSON/CSV files; **project file round trip of every field**; older project files; ESP32 NVS export import. |
+| `test_excel_import.py` | Minimal Label/Address sheet; header aliases; missing required column is an error; register/data type synonyms; unknown types default with one warning each; bad rows skipped with the right Excel row numbers; blank rows ignored; imported points valid; IEC 61131 names (`INT`/`UINT`/`WORD` 16-bit, `DINT`/`UDINT` 32-bit, `REAL`) with warnings for signed 16 / unsigned 32. Regression: `INT16` was imported as `int32`. |
 | `test_ssh_transport.py` | Connect parameters; failures reported, not raised; write to `.tmp` then `mv` (atomic); rename failure; both config files; stop after the first failure; binary upload; read / missing file; delete; restart command; log tail. |
-| `test_serial_transport.py` | Login with username/password; writes via heredoc with echo off; the CSV with echo on; failure detection without echo; read; delete; port closed afterwards. Known issues: JSON not written, failures reported as success, Read returns the echo. |
-| `test_mqtt_transport.py` | TLS and credentials; CONNACK refusals explained; CONNACK timeout; success **only with an ack**; no ack → failure but retained; CSV + JSON topics; read retained; delete clears retained; no file upload. |
-| `test_offline_queue_credentials.py` | Queue enqueue/list/remove, corrupt files skipped, oldest first; keyring save/read/clear. Known issues: same-second overwrite, CSV-only queue. |
-| `test_workers.py` | What Push / Read / Send / Erase / Retry do per mode: SSH push then restart (not on failure), serial login passed through, MQTT failure queues the config, certificates uploaded first (failure stops), MQTT says certs must be placed manually, exceptions become failures, read/erase targets per mode, "Send Settings" doesn't restart, retry removes only delivered entries. |
+| `test_serial_transport.py` | Login with username/password; writes via heredoc with and without echo; content containing an `EOF` line; failure detection; read and delete with and without echo; port closed afterwards. Regressions: JSON not written, failures reported as success, Read returned the echo. |
+| `test_mqtt_transport.py` | TLS and credentials; client-certificate auth (AWS IoT) without username; CONNACK refusals explained; CONNACK timeout; success **only with an ack** `saved`/`unchanged`, `rejected`/`error` is a failure; no ack → failure but retained; the JSON goes to `config/set`; read retained; delete clears retained; no file upload. |
+| `test_offline_queue_credentials.py` | Queue enqueue/list/remove, corrupt files skipped, oldest first (also with entries of older tool versions); keyring save/read/clear. Regressions: same-second overwrite, CSV-only queue. |
+| `test_workers.py` | What Push / Read / Send / Erase / Retry do per mode: SSH push then restart (not on failure), serial login passed through, MQTT failure queues the config, certificates uploaded first (failure stops), MQTT says certs must be placed manually, exceptions become failures, read/erase targets per mode, "Send Settings" doesn't restart, retry sends the JSON and removes only delivered entries, old CSV-only entries are kept with a message, MQTT certificate fields reach the transport. |
 | `test_main_window.py` | Device page ↔ config round trip; default device_id; board cert paths written (not PC paths); table ↔ points; invalid rows block validation/push with a dialog; push uses the selected mode and the full config; passwords saved to the keyring only when "Remember" is ticked and prefilled on start; save/load project; broken project; cancelled dialogs change nothing; export writes `.csv` + `.json`; Excel replace/append/cancel; delete rows; retry needs the MQTT tab; "Erase All Data" asks first and clears queue + keyring; status log escapes HTML. |
 
 **Adding a test**: drive the real widget or function; answer dialogs with `dialogs`;
@@ -258,12 +257,13 @@ The modules and why they exist: [`CI_CD_GUIDE.md` §5.7](CI_CD_GUIDE.md#57-unit-
 
 | Binary | Module under test | What it checks |
 |---|---|---|
-| `test_json` | `src/util/json.c` | String/int values, whitespace and newlines, missing keys leave the value unchanged, non-string rejected, truncation to the buffer, keys matched with their quotes (`"id"` ≠ `"device_id"`), `atoi` turns `"9600"`/`true` into 0, the search continues past the object (what the config format relies on), `*_from` = plain, `read_file` (content, empty, missing). Known issue: no unescaping. |
-| `test_payload` | `src/cloud/payload.c` | Empty message; every data type (`w`, `d`, `f` with 2 decimals, `b`); failed reads left out; no stray comma; a full buffer stops adding values and stays valid. Known issue: NaN → `nan`. |
-| `test_store_forward` | `src/cloud/store_forward.c` | File named `<unix s>000.txt`; NULL / write failure; only `*.txt` are payloads; offline → nothing; oldest first, then deleted; unreadable file kept; list/remove failures reported. Known issues: same-second overwrite, deleted without broker confirmation, backlog never drains. |
-| `test_ota_logic` | `src/cloud/ota_logic.c` | App and system commands parsed (sha256 only for app); other topics / empty payload ignored; missing URL; exact status JSON; digest check (case-insensitive, wrong length); the app-update sequence step by step: happy path, download failure, SHA mismatch deletes the download, first install without a running binary, backup failure keeps the running binary, replace failure restores the backup. Known issues: no sha256 → unverified install, any URL scheme, long URL cut, `\/` not decoded. |
+| `test_json` | `src/util/json.c` | String/int values, whitespace and newlines, missing keys leave the value unchanged, non-string rejected, truncation to the buffer, keys matched with their quotes (`"id"` ≠ `"device_id"`), `atoi` turns `"9600"`/`true` into 0, escapes decoded (`\"`, `\\`, `\/`, `\n`, `\uXXXX`), unterminated strings rejected, `json_value_end()` skips strings and nesting, `json_object_dup()` copies only that object (and skips the name used as a value), `*_from` = plain, `read_file`. |
+| `test_payload` | `src/cloud/payload.c` | Empty message; every data type (`w`, `d`, `f` with 2 decimals, `b`); failed reads left out; no stray comma; a full buffer stops adding values and stays valid; NaN/Inf → `null`. |
+| `test_store_forward` | `src/cloud/store_forward.c` | File named `<unix ms>_<seq>.txt`, unique within one second, sorting after files of older firmware; NULL / write failure; only `*.txt` are payloads; offline → nothing; oldest first, then deleted; unreadable file kept; list/remove failures reported; **kept when the broker doesn't confirm**; a round drains the backlog, limited to `SF_REPLAY_BATCH`, and stops at the first unconfirmed publish. |
+| `test_ota_logic` | `src/cloud/ota_logic.c` | App and system commands parsed (sha256 only for app); other topics / empty payload ignored; missing URL; **https only**; URLs up to 4095 characters, longer rejected; `\/` decoded; app commands need a 64-hex sha256; exact status JSON; digest check; the app-update sequence step by step: happy path, no sha256 → nothing downloaded, download failure, SHA mismatch deletes the download, first install without a running binary, backup failure keeps the running binary, replace failure restores the backup. |
+| `test_config_push` | `src/cloud/config_push.c` | A new config is saved and a reload requested; the same config (retained message on reconnect) is not rewritten; empty register list accepted; non-configs (empty, not JSON, no `device`/`registers`, trailing text) rejected without writing; NUL / oversized payloads; payload without NUL terminator; write failure keeps the old file; the exact ack JSON. |
 | `test_msg_queue` | `src/util/msg_queue.c` | FIFO order; payload copied; full queue drops the oldest; wrap-around; invalid arguments; items still delivered after shutdown; shutdown and push wake a blocked consumer (threads); destroy frees pending items (LeakSanitizer). |
-| `test_data_read` | `src/fieldbus/data.c` (+ `settings.c`, `json.c`) with a fake fieldbus driver | uint16 reads; each table read from its own Modbus table; float32 and int32 **high word first**; signed int32; int32 above 2^24 exact; slave switched per point; retries (`MAX_RETRIES`) then success; failure marks the point invalid; no driver → invalid; register and block writes. |
+| `test_data_read` | `src/fieldbus/data.c` (+ `settings.c`, `json.c`) with a fake fieldbus driver | uint16 reads; each table read from its own Modbus table; float32 and int32 **high word first**; signed int32; int32 above 2^24 exact; NaN/huge floats converted without undefined behaviour; slave switched per point; retries (`MAX_RETRIES`) then success; failure marks the point invalid; no driver → invalid; register and block writes. |
 
 **Adding a test**
 

@@ -28,7 +28,8 @@ def test_point_validation_rejects(point, error):
 
 @pytest.mark.parametrize("point", [
     RegisterPoint("A", 0), RegisterPoint("A", 65535), RegisterPoint("A", 0, slave_id=247),
-    RegisterPoint("A", 0, register_type="discrete", data_type="float32"),
+    RegisterPoint("A", 0, register_type="discrete", data_type="uint16"),
+    RegisterPoint("A", 65534, data_type="int32"),
 ])
 def test_point_validation_accepts(point):
     assert point.validate() is None
@@ -40,8 +41,56 @@ def test_validate_all_reports_every_bad_row_and_duplicates():
     ])
     errors = config.validate_all()
     assert any(e.startswith("Row 2") and "Label" in e for e in errors)
-    assert any("Row 3: duplicate address 1" in e and "row 1" in e for e in errors)
+    assert any(e.startswith("Row 3:") and "overlaps register 1" in e and "row 1" in e for e in errors)
     assert not any(e.startswith("Row 4") for e in errors), "same address on another slave is fine"
+
+
+@pytest.mark.parametrize("label, error", [
+    ("L" * 64, "64 bytes"),
+    ("é" * 32, "64 bytes"),
+    ('TEMP"C', 'must not contain'),
+    ("A\\B", "must not contain"),
+])
+def test_label_the_firmware_would_cut_or_misparse_rejected(label, error):
+    """Regression: labels the firmware truncates (char[64]) or that break the telemetry
+    JSON were accepted."""
+    assert error in RegisterPoint(label, 0).validate()
+
+
+def test_label_of_63_bytes_accepted():
+    assert RegisterPoint("L" * 63, 0).validate() is None
+
+
+def test_overlapping_32bit_registers_rejected():
+    """Regression: only exact duplicates were found, not an int32/float32 overlapping
+    the second register of another."""
+    config = DeviceConfig(slave_id=1, points=[
+        RegisterPoint("F", 0, data_type="float32"),
+        RegisterPoint("H", 1, slave_id=1, data_type="int32"),      # overlaps F's second register
+        RegisterPoint("N", 3, data_type="float32"),                # right after H (1-2): fine
+        RegisterPoint("X", 1, slave_id=2, data_type="float32"),    # other slave: fine
+        RegisterPoint("C", 1, register_type="coil"),               # other table: fine
+    ])
+    errors = config.validate_all()
+    assert len(errors) == 1 and errors[0].startswith("Row 2:") and "overlaps register 1" in errors[0]
+
+
+def test_default_slave_counts_as_device_slave_for_overlaps():
+    config = DeviceConfig(slave_id=3, points=[RegisterPoint("A", 5), RegisterPoint("B", 5, slave_id=3)])
+    assert any("overlaps" in e for e in config.validate_all())
+
+
+@pytest.mark.parametrize("point, error", [
+    (RegisterPoint("C", 0, register_type="coil", data_type="float32"), "needs holding/input"),
+    (RegisterPoint("I", 65535, data_type="int32"), "max 65535"),
+])
+def test_32bit_type_limits(point, error):
+    assert error in point.validate()
+
+
+def test_duplicate_labels_rejected():
+    config = DeviceConfig(points=[RegisterPoint("A", 0), RegisterPoint("A", 1)])
+    assert any("duplicate label 'A'" in e for e in config.validate_all())
 
 
 def test_full_config_has_every_section_the_firmware_reads():
@@ -49,13 +98,23 @@ def test_full_config_has_every_section_the_firmware_reads():
     assert list(d) == ["device", "wifi", "modbus_tcp", "mqtt", "registers"]
     assert set(d["device"]) == {"device_id", "slave_id", "baud", "parity", "stop_bits", "interval_sec"}
     assert set(d["mqtt"]) == {"broker", "port", "client_id", "ca_cert", "device_cert", "private_key", "topic"}
-    assert d["registers"] == [{"label": "A", "address": 0, "type": "holding", "data_type": "uint16"}]
+    assert set(d["wifi"]) == {"ssid", "password", "country", "enable"}
+    assert d["registers"] == [{"label": "A", "address": 0, "type": "holding", "data_type": "uint16", "slave_id": 1}]
 
 
-def test_register_slave_id_written_only_when_set():
-    regs = DeviceConfig(points=[RegisterPoint("A", 0), RegisterPoint("B", 1, slave_id=3)]).to_full_config_dict()["registers"]
-    assert "slave_id" not in regs[0]      # 0 = device default (see validate known issue)
-    assert regs[1]["slave_id"] == 3
+def test_register_slave_id_always_written():
+    """Regression: slave_id was omitted for "device default" (0) registers, and the
+    firmware then took the next register's slave_id."""
+    regs = DeviceConfig(slave_id=5, points=[RegisterPoint("A", 0), RegisterPoint("B", 1, slave_id=3)]
+                        ).to_full_config_dict()["registers"]
+    assert [r["slave_id"] for r in regs] == [5, 3]
+
+
+def test_wifi_enable_and_country_written():
+    """Regression: wifi.enable was not written, so the firmware read modbus_tcp's 'enable'."""
+    wifi = DeviceConfig(wifi_enable=0, wifi_country="DE").to_full_config_dict()["wifi"]
+    assert (wifi["enable"], wifi["country"]) == (0, "DE")
+    assert DeviceConfig().to_full_config_dict()["wifi"]["enable"] == 1
 
 
 def test_full_config_json_is_the_dict():
@@ -75,7 +134,7 @@ def test_save_full_config_writes_json_and_csv(tmp_path):
 def test_project_file_round_trip_keeps_every_field(tmp_path):
     original = DeviceConfig(
         device_id="GW-7", slave_id=5, baud=19200, interval_sec=12, parity="Odd", stop_bits=2,
-        wifi_ssid="plant", wifi_password="pw", modbus_tcp_enable=1, modbus_tcp_ip="10.0.0.2",
+        wifi_ssid="plant", wifi_password="pw", wifi_enable=0, wifi_country="DE", modbus_tcp_enable=1, modbus_tcp_ip="10.0.0.2",
         modbus_tcp_port=1502, modbus_tcp_slave_id=9, mqtt_broker="b", mqtt_port=8884,
         mqtt_client_id="cid", mqtt_ca_cert="/a", mqtt_device_cert="/b", mqtt_private_key="/c",
         mqtt_topic="t/x",

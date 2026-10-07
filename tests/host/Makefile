@@ -10,7 +10,7 @@
 REPO    := $(abspath $(CURDIR)/../..)
 OUT     ?= $(REPO)/build-host
 CC      ?= gcc
-SAN     := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+SAN     := -fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -fno-omit-frame-pointer
 CFLAGS  := -std=gnu11 -g -O1 -Wall -Wextra -Werror $(SAN) \
            -I$(REPO)/inc -I$(CURDIR) -I$(CURDIR)/unity
 LDFLAGS := $(SAN) -pthread
@@ -22,10 +22,11 @@ FW_json          := $(SRC)/util/json.c
 FW_payload       := $(SRC)/cloud/payload.c
 FW_store_forward := $(SRC)/cloud/store_forward.c
 FW_ota_logic     := $(SRC)/cloud/ota_logic.c $(SRC)/util/json.c
+FW_config_push   := $(SRC)/cloud/config_push.c $(SRC)/util/json.c
 FW_msg_queue     := $(SRC)/util/msg_queue.c
 FW_data_read     := $(SRC)/fieldbus/data.c $(SRC)/util/settings.c $(SRC)/util/json.c
 
-TESTS := json payload store_forward ota_logic msg_queue data_read
+TESTS := json payload store_forward ota_logic config_push msg_queue data_read
 BINS  := $(addprefix $(OUT)/test_,$(TESTS))
 
 .PHONY: all run clean

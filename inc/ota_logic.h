@@ -39,7 +39,7 @@ typedef enum
 typedef struct
 {
     ota_type_t type;            /**< Update type.                    */
-    char       url[512];        /**< Pre-signed download URL.        */
+    char       url[4096];       /**< Pre-signed download URL (https). */
     char       sha256[65];      /**< Expected SHA256 hex (app only). */
     char       version[32];     /**< Target version string.          */
     int        pending;         /**< 1 = request waiting to process. */
@@ -48,24 +48,29 @@ typedef struct
 /** @brief Result of ota_parse_request(). */
 typedef enum
 {
-    OTA_REQ_OK          = 0,    /**< Valid request in *req. */
-    OTA_REQ_NOT_OTA     = 1,    /**< Not an OTA topic, or no payload: ignore. */
-    OTA_REQ_MISSING_URL = 2     /**< OTA topic, but no "url" in the payload. */
+    OTA_REQ_OK           = 0,   /**< Valid request in *req. */
+    OTA_REQ_NOT_OTA      = 1,   /**< Not an OTA topic, or no payload: ignore. */
+    OTA_REQ_MISSING_URL  = 2,   /**< OTA topic, but no "url" in the payload. */
+    OTA_REQ_BAD_URL      = 3,   /**< The URL is not https:// (status error "invalid_url"). */
+    OTA_REQ_URL_TOO_LONG = 4,   /**< The URL does not fit ota_request_t.url ("url_too_long"). */
+    OTA_REQ_BAD_SHA256   = 5    /**< App update without a 64-hex-digit "sha256" ("invalid_sha256"). */
 } ota_parse_result_t;
 
 /**
  * @brief Parses an OTA command message.
  *
  * The type comes from the topic (app_topic or system_topic). "url" and
- * "version" are read from the JSON payload, "sha256" only for app updates.
- * Strings longer than the request fields are truncated.
+ * "version" are read from the JSON payload (escapes decoded), "sha256" only
+ * for app updates. The URL must start with https:// and fit the url field; an
+ * app update must carry a 64-hex-digit sha256 (it is never installed
+ * unverified). A too-long version is truncated.
  *
  * @param topic        MQTT topic of the message.
  * @param payload      NUL-terminated JSON payload.
  * @param app_topic    Configured application OTA topic.
  * @param system_topic Configured system OTA topic.
  * @param req          Output; zeroed and filled when the topic is an OTA topic.
- * @return OTA_REQ_OK, OTA_REQ_NOT_OTA or OTA_REQ_MISSING_URL.
+ * @return OTA_REQ_OK, or why the request is ignored / rejected (ota_parse_result_t).
  */
 ota_parse_result_t ota_parse_request(const char *topic, const char *payload,
                                      const char *app_topic, const char *system_topic,
@@ -86,6 +91,15 @@ const char *ota_type_name(ota_type_t type);
  * @return Static string.
  */
 const char *ota_status_name(ota_status_t status);
+
+/**
+ * @brief Status-message error code for a rejected request.
+ *
+ * @param result ota_parse_request() result.
+ * @return "invalid_url", "url_too_long", "invalid_sha256", or NULL for results
+ *         that are not reported (OK, not an OTA topic, missing URL).
+ */
+const char *ota_parse_error(ota_parse_result_t result);
 
 /**
  * @brief Formats the JSON status message published on the OTA status topic.
@@ -139,11 +153,11 @@ typedef struct
  * @brief Downloads, verifies and installs a new application binary.
  *
  * Sequence: DOWNLOADING → download to \<download_dir\>/main.new; VERIFYING →
- * SHA256 check, only when req->sha256 is not empty; APPLYING → rename the running
+ * SHA256 check (a request without sha256 fails with sha256_missing); APPLYING → rename the running
  * binary to \<binary\>.bak (a missing binary is fine), rename main.new into place
  * (on failure the backup is restored), make it executable; SUCCEEDED. Every failure
- * reports FAILED with download_failed, sha256_mismatch, backup_failed or
- * replace_failed. Restarting the application is left to the caller.
+ * reports FAILED with sha256_missing, download_failed, sha256_mismatch,
+ * backup_failed or replace_failed. Restarting the application is left to the caller.
  *
  * @param ops          Side effects.
  * @param req          The request (version, url, sha256).

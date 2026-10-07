@@ -60,15 +60,9 @@ def many_regs(n, label_len=8):
 
 NEGATIVE = {
     # --- the firmware's parser would read something else -------------------
-    "wifi_enable_missing_read_from_modbus_tcp": (
-        lambda c: (c["wifi"].pop("enable"), c["modbus_tcp"].__setitem__("enable", 0)),
-        "firmware reads wifi.enable = 0"),
-    "register_slave_id_missing_taken_from_next": (
-        lambda c: (c["registers"][0].pop("slave_id"), c["registers"].insert(1, reg(slave_id=2))),
-        "slave_id = 2, the file means 1"),
     "label_with_quote": (set_(["registers", 0, "label"], 'TEMP"C'), "label"),
     "label_with_backslash": (set_(["registers", 0, "label"], "A\\B"), "label"),
-    "ssid_with_quote": (set_(["wifi", "ssid"], 'my"net'), "wifi.ssid"),
+    "ssid_with_quote": (set_(["wifi", "ssid"], 'my"net'), "wifi/ssid"),
     "label_64_bytes": (set_(["registers", 0, "label"], "L" * 64), "the firmware keeps 63"),
     "label_utf8_64_bytes": (set_(["registers", 0, "label"], "é" * 32), "64 bytes"),
     "device_id_64_chars": (set_(["device", "device_id"], "D" * 64), "device.device_id"),
@@ -130,6 +124,13 @@ ALLOWED = {
     "no_registers": set_(["registers"], []),
     "register_without_slave_id_last": lambda c: (c["registers"][-1].pop("slave_id"),
                                                  c["registers"][-1].__setitem__("address", 500)),
+    # Regression: the firmware's parser read a key missing from one section from a LATER
+    # section (wifi.enable from modbus_tcp: Wi-Fi off whenever Modbus TCP was off).
+    "wifi_without_enable_keeps_default": lambda c: (c["wifi"].pop("enable"),
+                                                    c["modbus_tcp"].update(enable=0, ip="")),
+    # Regression: a register without slave_id took the NEXT register's slave_id.
+    "register_without_slave_id_uses_device_slave": lambda c: (
+        c["registers"][0].pop("slave_id"), c["registers"].insert(1, reg(slave_id=2))),
 }
 
 

@@ -1,6 +1,5 @@
 {
   "src/cloud/https.c|constParameterCallback|Parameter 'ptr' can be declared as pointer to const. However it seems that 'write_file_cb' is a callback function, if 'ptr' is declared with const you might also need to cast function pointer(s).": 1,
-  "src/fieldbus/data.c|constVariablePointer|Variable 'p' can be declared as pointer to const": 1,
   "src/fieldbus/mb_tcp.c|constVariablePointer|Variable 'args' can be declared as pointer to const": 1,
   "src/main.c|constVariablePointer|Variable 'pts' can be declared as pointer to const": 1,
   "src/system/wifi.c|constVariablePointer|Variable 'slash' can be declared as pointer to const": 1,
@@ -48,12 +47,5 @@
   "src/ui/display.c|unusedStructMember|struct member 'drm_mode_modeinfo::vsync_end' is never used.": 1,
   "src/ui/display.c|unusedStructMember|struct member 'drm_mode_modeinfo::vsync_start' is never used.": 1,
   "src/ui/display.c|unusedStructMember|struct member 'drm_mode_modeinfo::vtotal' is never used.": 1,
-  "src/util/json.c|constVariablePointer|Variable 'end' can be declared as pointer to const": 1,
-  "src/util/json.c|constVariablePointer|Variable 'p' can be declared as pointer to const": 2,
-  "src/util/settings.c|constVariablePointer|Variable 'device' can be declared as pointer to const": 1,
-  "src/util/settings.c|constVariablePointer|Variable 'mbtcp' can be declared as pointer to const": 1,
-  "src/util/settings.c|constVariablePointer|Variable 'mqtt' can be declared as pointer to const": 1,
-  "src/util/settings.c|constVariablePointer|Variable 'ota' can be declared as pointer to const": 1,
-  "src/util/settings.c|constVariablePointer|Variable 'wdg' can be declared as pointer to const": 1,
-  "src/util/settings.c|constVariablePointer|Variable 'wifi' can be declared as pointer to const": 1
+  "src/util/json.c|constVariablePointer|Variable 'p' can be declared as pointer to const": 1
 }

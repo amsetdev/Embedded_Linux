@@ -2,8 +2,8 @@
 
 Builds configs with the tool's own DeviceConfig (tools/smart_rtu_tool/core/
 register_model.py, the code behind "Send to device"), then runs them through
-every rule and the real firmware parser. Known contract bugs are strict xfails:
-they turn red once fixed, as a reminder to make them normal tests.
+every rule and the real firmware parser. Tests starting with "Regression:" guard
+contract bugs that were fixed (DOCS/TESTS_GUIDE.md §7).
 """
 
 import csv
@@ -54,30 +54,63 @@ def test_tool_writes_every_register_type_and_data_type():
     assert not problems, "\n".join(problems)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the tool doesn't write wifi.enable, so the firmware's json_get_int() runs on into "
-    "modbus_tcp and reads its 'enable': Wi-Fi is disabled whenever Modbus TCP is (main.c, wifi.c)"))
 def test_wifi_stays_enabled_when_modbus_tcp_disabled():
-    view = firmware_view(tool_config(modbus_tcp_enable=0, modbus_tcp_ip="").to_full_config_json())
+    """Regression: the tool didn't write wifi.enable and the firmware read modbus_tcp's
+    'enable' instead: Wi-Fi was disabled whenever Modbus TCP was."""
+    config = tool_config(modbus_tcp_enable=0, modbus_tcp_ip="")
+    assert config.to_full_config_dict()["wifi"]["enable"] == 1
+    view = firmware_view(config.to_full_config_json())
     assert view["fields"]["wifi.enable"]["value"] == 1
+    assert not problems_of(config)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: for a register using the device's slave (slave_id 0 in the tool) the tool omits "
-    "slave_id, and the firmware's parse_registers() takes the NEXT register's slave_id"))
+def test_wifi_can_be_disabled():
+    view = firmware_view(tool_config(wifi_enable=0).to_full_config_json())
+    assert view["fields"]["wifi.enable"]["value"] == 0
+
+
 def test_register_with_device_default_slave_polled_from_device_slave():
+    """Regression: for slave_id 0 ("device default") the tool omitted slave_id and the
+    firmware took the NEXT register's slave_id."""
     points = [RegisterPoint("A", 0, slave_id=0), RegisterPoint("B", 1, slave_id=2)]
-    view = firmware_view(tool_config(points=points, slave_id=1).to_full_config_json())
+    config = tool_config(points=points, slave_id=1)
+    assert [r["slave_id"] for r in config.to_full_config_dict()["registers"]] == [1, 2]
+    view = firmware_view(config.to_full_config_json())
     assert [r["slave_id"] for r in view["registers"]] == [1, 2]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: settings_defaults() formats the OTA topics with the default device_id AMSET-001 "
-    "before the file's device_id is read, and the tool writes no 'ota' section: every gateway "
-    "listens on devices/AMSET-001/ota/*"))
+def test_firmware_uses_device_slave_when_register_slave_missing():
+    """Regression (firmware side): parse_registers() reads each register object only."""
+    text = json.dumps({"device": {"slave_id": 4}, "registers": [
+        {"label": "A", "address": 0, "type": "holding", "data_type": "uint16"},
+        {"label": "B", "address": 1, "type": "holding", "data_type": "uint16", "slave_id": 9}]})
+    assert [r["slave_id"] for r in firmware_view(text)["registers"]] == [4, 9]
+
+
 def test_ota_topics_follow_configured_device_id():
+    """Regression: OTA topics were formatted with the default device_id AMSET-001 before
+    the file's device_id was read: every gateway listened on devices/AMSET-001/ota/*."""
     view = firmware_view(tool_config(device_id="GW-42").to_full_config_json())
     assert view["fields"]["ota.app_topic"]["value"] == "devices/GW-42/ota/app"
+    assert view["fields"]["ota.system_topic"]["value"] == "devices/GW-42/ota/system"
+    assert view["fields"]["ota.status_topic"]["value"] == "devices/GW-42/ota/status"
+
+
+def test_ota_section_still_overrides_topics():
+    d = tool_config(device_id="GW-42").to_full_config_dict()
+    d["ota"] = {"enable": 1, "app_topic": "custom/app", "system_topic": "custom/sys",
+                "status_topic": "custom/status", "download_dir": "/tmp/ota", "app_version": "1.0.0",
+                "app_binary_path": "/home/root/edb_c/linking/main"}
+    view = firmware_view(json.dumps(d))
+    assert view["fields"]["ota.app_topic"]["value"] == "custom/app"
+
+
+def test_escaped_strings_read_like_json():
+    """Regression: the firmware didn't decode JSON escapes (a value stopped at \\")."""
+    d = tool_config().to_full_config_dict()
+    d["wifi"]["password"] = 'pa"ss\\word/x'
+    view = firmware_view(json.dumps(d))
+    assert view["fields"]["wifi.password"]["value"] == 'pa"ss\\word/x'
 
 
 TOOL_GAPS = [
@@ -95,10 +128,9 @@ def test_validate_rules_reject_tool_gap_cases(point):
 
 
 @pytest.mark.parametrize("point", TOOL_GAPS)
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: DeviceConfig.validate_all() only checks ranges and exact duplicates; it accepts "
-    "labels the firmware truncates or misparses and overlapping 32-bit registers"))
 def test_tool_rejects_what_firmware_mishandles(point):
+    """Regression: DeviceConfig.validate_all() only checked ranges and exact duplicates;
+    it accepted labels the firmware cuts or misparses and overlapping 32-bit registers."""
     config = tool_config()
     config.points.append(point)
     assert config.validate_all(), "the tool's own validation accepted it"
@@ -124,13 +156,18 @@ def test_csv_export_matches_json():
                     for r in d["registers"]]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the tool's MQTT delivery mode publishes the config to amset/<device_id>/config/set "
-    "(core/mqtt_transport.py), but the firmware only subscribes to its OTA topics (src/cloud/mqtt.c): "
-    "MQTT 'Push' always times out and queues. See tools/smart_rtu_tool/FIRMWARE_NOTES.md"))
 def test_firmware_subscribes_to_tool_config_topic():
+    """Regression: the tool published configs on amset/<id>/config/set but the firmware
+    never subscribed to it (MQTT 'Push' always timed out)."""
     import re
     from conftest import REPO
+    header = (REPO / "inc/config_push.h").read_text()
+    set_fmt = re.search(r'#define\s+CONFIG_SET_TOPIC_FMT\s+"([^"]+)"', header).group(1)
+    ack_fmt = re.search(r'#define\s+CONFIG_ACK_TOPIC_FMT\s+"([^"]+)"', header).group(1)
+    assert set_fmt % "GW-1" == "amset/GW-1/config/set"
+    assert ack_fmt % "GW-1" == "amset/GW-1/config/ack"
     mqtt_c = (REPO / "src/cloud/mqtt.c").read_text()
-    subscribed = re.findall(r"mosquitto_subscribe\([^,]+,[^,]+,\s*([^,]+),", mqtt_c)
-    assert any("config" in s for s in subscribed), f"firmware subscribes only to: {subscribed}"
+    assert re.search(r"snprintf\(config_topic,[^;]*CONFIG_SET_TOPIC_FMT", mqtt_c)
+    assert re.search(r"mosquitto_subscribe\(m, NULL, config_topic, 1\)", mqtt_c)
+    tool = (REPO / "tools/smart_rtu_tool/core/mqtt_transport.py").read_text()
+    assert 'f"amset/{device_id}/config/set"' in tool and 'f"amset/{device_id}/config/ack"' in tool

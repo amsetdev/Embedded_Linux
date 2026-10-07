@@ -62,7 +62,7 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `tests/fixtures/configs/` | known-good test config (`full_config.json`) |
 | `configs/` | real device configs, one per device (validated automatically; none yet) |
 | `tests/static/warnings_gate.py` | compiler-warning gate |
-| `tests/static/cppcheck_gate.py`, `cppcheck-baseline.json` | cppcheck gate + the accepted findings (59) |
+| `tests/static/cppcheck_gate.py`, `cppcheck-baseline.json` | cppcheck gate + the accepted findings (50) |
 | `tests/static/doxygen_gate.py`, `Doxyfile`, `DOCS/DOXYGEN_MAINPAGE.md` | Doxygen gate, its config (non-default settings only) and start page |
 | `tests/static/srcs.py` | reads `SRCS` from the makefile: the static gates check exactly what is built |
 | `tests/static/compiler-warnings-baseline.json` | warnings accepted (8 left) |
@@ -178,7 +178,7 @@ the board** (`/home/root/edb_c/linking/{client.crt,private.key,ca.crt}`, paths i
 `smart_rtu_config.json`); nothing is compiled in. Unlike `std_gw`, CI never needs
 the device identity to build.
 
-**Built sources**: the 21 files in `SRCS` in the `makefile`.
+**Built sources**: the 22 files in `SRCS` in the `makefile`.
 `src/fieldbus/modbus.c` and `src/control_logic.c` are **not built** and are
 excluded from all checks (they stay in the repo for reference).
 
@@ -240,11 +240,11 @@ NEW warnings (fix them; see DOCS/CI_CD_GUIDE.md 'compiler-warnings'):
 ### 5.3 `validate-configs` — device configs and the tool/firmware contract
 
 **Why it exists.** The firmware reads `smart_rtu_config.json` with a small
-hand-written parser (`src/util/json.c`) that finds every key with `strstr()` **from
-the start of its section to the end of the file**. A key missing from one section is
-silently read from a later one; a string stops at the first `"` (no unescaping); a
-long string is cut to its buffer; `"9600"` or `true` become `0` (`atoi`). None of that
-shows an error on the board.
+hand-written parser (`src/util/json.c`). Its quirks never show an error on the board:
+a long string is cut to its buffer, `"9600"` or `true` become `0` (`atoi`), and until
+the bug-fix pass (§6.1) a key missing from one section was read from a later section
+and strings weren't unescaped. Comparing against the real parser catches all of that,
+including quirks nobody has noticed yet.
 
 **How it checks.** `tests/validate/firmware_view.py` compiles the **unmodified**
 `src/util/settings.c`, `src/util/json.c` and `src/fieldbus/data.c` with
@@ -272,13 +272,14 @@ any input fails the test too.
     their `char[]` (label 63 bytes, device_id 63, broker 255, …; UTF-8 bytes count).
 * Configs built by the tool's own `DeviceConfig` (`test_tool_contract.py`), its CSV
   export matching the JSON, and the type names (`test_type_consistency.py`).
-* 41 negative cases and 10 "must be allowed" cases (`test_negative_configs.py`).
+* 39 negative cases and 12 "must be allowed" cases (`test_negative_configs.py`).
 
 **Reading a failure**
 ```
 configs/plant_a.json has 2 problem(s):
   firmware reads wifi.enable = 0, the file means 1 (the key is missing here, so the
     firmware's parser (src/util/json.c) took it from a later part of the file; write it explicitly)
+  (this one can no longer happen since the fix in §6.1; shown for the message format)
   overlap: registers[7] 'P2_KWH' (float32, holding 6412-6413) reuses slave 1 holding
     register 6413 of registers[6] 'P1_KWH' (float32)
 ```
@@ -339,15 +340,15 @@ queue lives in a temp directory.
 ### 5.5 `cppcheck` — static analysis with a baseline
 
 **Checks**: cppcheck 2.17 (`--enable=warning,style,performance,portability`,
-exhaustive, 32-bit platform) on the files in the makefile's `SRCS` (21). The
-findings that existed when the job was added (61; 59 left) are in
-`tests/static/cppcheck-baseline.json` (39 unused struct members, 14 could-be-const
+exhaustive, 32-bit platform) on the files in the makefile's `SRCS` (22). The
+findings that existed when the job was added (61; 50 left) are in
+`tests/static/cppcheck-baseline.json` (39 unused struct members, 5 could-be-const
 pointers, 2 `%d` for unsigned in `display.c`, 2 shadowed `cfg`, …). The job **fails
 only on new findings**, matched by file + check id + message (not line number).
 
 **Reading a failure** (example)
 ```
-cppcheck: 60 findings, baseline 59, new 1, fixed 0
+cppcheck: 51 findings, baseline 50, new 1, fixed 0
 NEW findings (fix them, or add '// cppcheck-suppress <id>' with a reason):
   src/cloud/mqtt.c:120: warning: nullPointerRedundantCheck: Either the condition 'mosq' is redundant or there is possible null pointer dereference: mosq.
 ```
@@ -397,7 +398,8 @@ source files** with native gcc, `-Wall -Wextra -Werror`, Unity and
 | `src/util/msg_queue.c` | bounded queue Modbus thread → MQTT publisher | `main.c` |
 | `src/cloud/payload.c` | the telemetry JSON (`payload_build()`) | `mqtt.c` (`build_payload()`) |
 | `src/cloud/store_forward.c` | offline file naming, oldest-first replay (`sf_ops_t`) | `storage.c` |
-| `src/cloud/ota_logic.c` | OTA command parsing, status JSON, digest check, app-update sequence (`ota_app_ops_t`) | `ota.c` |
+| `src/cloud/ota_logic.c` | OTA command parsing (https only, sha256 required), status JSON, digest check, app-update sequence (`ota_app_ops_t`) | `ota.c` |
+| `src/cloud/config_push.c` | configuration pushed over MQTT: checks, write-if-changed, reload, ack (`cp_ops_t`) | `mqtt.c` |
 | `src/fieldbus/data.c` | register reads through the fieldbus driver interface (fake driver in the test) | `main.c` |
 
 `payload.c`, `store_forward.c` and `ota_logic.c` were moved out of `mqtt.c`,
@@ -428,23 +430,30 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 
 | Issue | Note |
 |---|---|
-| The tool doesn't write `wifi.enable`; the firmware reads `modbus_tcp.enable` instead, so **Wi-Fi is disabled whenever Modbus TCP is** | `test_tool_contract.py::test_wifi_stays_enabled_when_modbus_tcp_disabled` |
-| For a register on the device's default slave the tool omits `slave_id`; the firmware takes the **next register's** `slave_id` | `test_tool_contract.py::test_register_with_device_default_slave_polled_from_device_slave` |
-| OTA topics are built from the default device_id before the config is read: **every gateway uses `devices/AMSET-001/ota/*`** (the tool writes no `ota` section) | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
-| The tool's own validation accepts labels > 63 bytes, labels with `"`, overlapping 32-bit registers (the validate rules reject them) | `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` (3 cases) |
-| **MQTT delivery mode has no firmware side**: the tool publishes to `amset/<id>/config/set`, the firmware subscribes only to its OTA topics, so MQTT "Push" always times out and queues | `tests/validate/test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
-| **Serial delivery doesn't work on a real console**: the JSON has no trailing newline, so the heredoc never ends and `smart_rtu_config.json` is not written; and because the console echoes the typed command (which contains the completion marker), failures are reported as success and Read returns the echoed command | `test_serial_transport.py::test_push_json_writes_file`, `::test_failed_write_not_reported_as_success`, `::test_read_text_with_echo` |
-| Excel import turns any data type containing "int" into `int32`: vendor `INT16` registers are read as 2 registers | `test_excel_import.py::test_int16_not_imported_as_int32` (3 cases) |
-| Offline queue: a second push in the same second overwrites the first; the queue keeps and re-sends only the CSV, the firmware reads the JSON | `test_offline_queue_credentials.py::test_two_pushes_in_one_second_both_kept`, `::test_queued_entry_keeps_the_json_the_firmware_reads` |
-| **OTA: an app command without `sha256` installs the download unverified**; any URL scheme is accepted (libcurl also does `file://`, `http://`); URLs > 511 characters (long S3 pre-signed URLs) are cut; JSON escapes (`\/`) aren't decoded | `test_ota_logic.c`: `test_update_without_sha256_not_installed`, `test_non_https_url_rejected`, `test_long_presigned_url_not_truncated`, `test_escaped_slashes_in_url` |
-| A float register holding NaN/Inf makes the telemetry message invalid JSON (`"x":nan`) | `test_payload.c::test_nan_float_gives_valid_json` |
-| Offline storage: files are named with 1 s resolution (a second payload in the same second overwrites the first); a replayed file is deleted without broker confirmation (failed publishes are re-stored as the newest file, so order is lost); one file is sent per 60 s, slower than a 30 s poll interval produces them, so a backlog never drains | `test_store_forward.c`: `test_two_stores_in_one_second_both_kept`, `test_file_kept_when_publish_fails`, `test_backlog_drains` |
-| `json.c` doesn't unescape strings (`\"`) | `test_json.c::test_escaped_quote_in_value` (config strings with `"`/`\` are rejected by validate) |
-| `data.c` converts a float register to `int` with `(int)fval`: undefined behaviour for NaN/Inf/huge values (saturates on ARM in practice) | no test (UBSan would abort the run); fix together with the NaN payload issue |
-| `inc/storage.h` describes an SQLite database (`MQTT_STORAGE_DB`); storage actually uses one file per payload in `/home/root/edb_c/linking/storage` | documentation only |
-| `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`) | change it on that network, and make the defaults empty |
 | The AWS IoT key (`private.key`) and the board password (`.env`) are still in **git history**, and the project is **public** on this GitLab | removed from the tree (§9). Rotate both; consider making the project private |
-| 8 compiler warnings | baseline (§5.2) |
+| `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`), used when the config has no `wifi` section | change it on that network, and make the defaults empty |
+| A reload (SIGHUP or a config push) runs `mqtt_cleanup()` + `mqtt_init()` in the main thread while the publisher and replay threads may be publishing on the old client | no test (needs the board); found while fixing the config push. Fix: a lock around the client, or reconnect instead of re-creating it |
+| 8 compiler warnings, 50 cppcheck findings | baselines (§5.2, §5.5) |
+
+There are no open strict xfails / `KNOWN_ISSUE`s: all 24 found while building the
+suite were fixed in the bug-fix pass (§6.1), each with a `Regression:` test.
+
+### 6.1 Fixed in the bug-fix pass (2026-10-07) — behaviour changes to know
+
+| Area | Before | Now | Regression tests |
+|---|---|---|---|
+| Firmware config parsing | a key missing from a section / register was read from a **later** one (Wi-Fi off whenever Modbus TCP was off; registers on the wrong slave); no JSON unescaping | each section and register object is read on its own (`json_object_dup()`, `json_value_end()`); `\"`, `\\`, `\/`, `\n`, `\uXXXX` decoded | `test_negative_configs.py` (ALLOWED `wifi_without_enable_keeps_default`, `register_without_slave_id_uses_device_slave`), `test_tool_contract.py`, `test_json.c` |
+| OTA topics | always `devices/AMSET-001/ota/*` | `devices/<device_id>/ota/*` (an `ota` section still overrides) | `test_tool_contract.py::test_ota_topics_follow_configured_device_id` |
+| OTA commands | no `sha256` → installed unverified; any URL scheme; URLs cut at 511 | app updates **need a 64-hex `sha256`**; URL must be **`https://`**; up to 4095 characters, longer rejected. Rejections are published as `FAILED` with `invalid_sha256` / `invalid_url` / `url_too_long` | `test_ota_logic.c` |
+| Telemetry | NaN/Inf floats → `nan` (invalid JSON); `(int)NaN` undefined behaviour | `null`; int value clamped | `test_payload.c`, `test_data_read.c` (`-fsanitize=float-cast-overflow`) |
+| Offline storage | `<unix s>000.txt` (same-second overwrite); file deleted without PUBACK; 1 file per 60 s | `<unix ms>_<seq>.txt`, never overwritten (old names still replayed first); deleted only after the broker's **PUBACK** (`mqtt_publish_confirmed()`, 10 s); up to **100 files per round** | `test_store_forward.c` |
+| MQTT config push | the firmware didn't listen; the tool sent the CSV | firmware subscribes to **`amset/<device_id>/config/set`**, saves the JSON atomically if it changed, reloads settings **and registers**, acks on **`amset/<device_id>/config/ack`** `{"status":"saved"/"unchanged"/"rejected"/"error","registers":N}`; the tool sends the JSON there and succeeds only on `saved`/`unchanged`. The device's AWS IoT policy must allow Subscribe/Receive on the set topic and Publish on the ack topic. The tool's MQTT tab now takes a CA / client cert / key for AWS IoT | `test_config_push.c`, `test_mqtt_transport.py`, `test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
+| SIGHUP | reloaded settings and MQTT, not registers | also re-reads the registers (in the polling thread, between cycles) | covered by HIL (step 7) |
+| Tool config file | no `wifi.enable`/`country`; `slave_id` omitted for "device default" | both always written; Device page has **Wi-Fi enabled** and **Country** | `test_register_model.py`, `test_tool_contract.py` |
+| Tool validation | accepted labels > 63 bytes / with `"`, overlapping 32-bit registers | rejected (also duplicate labels, 32-bit on coils, Address+1 > 65535) | `test_register_model.py`, `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` |
+| Excel import | anything containing "int" → `int32` | IEC names: `INT`/`UINT`/`WORD`/`INT16` → `uint16` (warning for signed), `DINT`/`UDINT`/`DWORD` → `int32` (warning for unsigned), `REAL` → `float32` | `test_excel_import.py` |
+| Serial delivery | JSON never written; echoed marker → failures reported as success; Read returned the echo | trailing newline + unique heredoc terminator; markers typed as `__RTU_TOOL_""DONE__` so the echo can't contain them | `test_serial_transport.py` |
+| Offline retry queue (tool) | same-second overwrite; only the CSV kept and re-sent | unique names, JSON kept and re-sent via the config topic; old CSV-only entries are kept with a message | `test_offline_queue_credentials.py`, `test_workers.py` |
 
 ---
 

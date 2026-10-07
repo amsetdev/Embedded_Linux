@@ -314,6 +314,20 @@ int settings_load(void);
  */
 int settings_reload(void);
 
+/**
+ * @brief Asks the main loop to reload the configuration (like SIGHUP).
+ *
+ * Thread-safe; used when a configuration was pushed over MQTT.
+ */
+void settings_request_reload(void);
+
+/**
+ * @brief Returns and clears a pending settings_request_reload().
+ *
+ * @return 1 if a reload was requested since the last call, 0 otherwise.
+ */
+int settings_take_reload_request(void);
+
 /* -------------------------------------------------------------------------- */
 /* Convenience Getters                                                        */
 /* -------------------------------------------------------------------------- */

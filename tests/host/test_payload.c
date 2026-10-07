@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "known_issue.h"
 #include "payload.h"
 #include "unity.h"
 
@@ -79,11 +78,10 @@ static void test_full_buffer_stops_adding_values_and_stays_terminated(void)
 
 static void test_nan_float_gives_valid_json(void)
 {
-    ModbusPoint p[] = { pt("F", 'f', 0, NAN, 1) };
-    payload_build(buf, sizeof(buf), 1, p, 1);
-    KNOWN_ISSUE(strstr(buf, "nan") == NULL,
-                "a float register holding NaN/Inf is printed as 'nan'/'inf', which makes the whole "
-                "telemetry message invalid JSON (expected null)");
+    /* Regression: NaN/Inf were printed as nan/inf, making the whole message invalid JSON. */
+    ModbusPoint p[] = { pt("N", 'f', 0, NAN, 1), pt("I", 'f', 0, -INFINITY, 1), pt("OK", 'f', 0, 1.5f, 1) };
+    payload_build(buf, sizeof(buf), 1, p, 3);
+    TEST_ASSERT_EQUAL_STRING("{\"ts\":1,\"values\":{\"N\":null,\"I\":null,\"OK\":1.50}}", buf);
 }
 
 int main(void)

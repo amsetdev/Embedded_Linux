@@ -445,6 +445,17 @@ void ota_on_message(struct mosquitto *m,
     if (parsed == OTA_REQ_NOT_OTA)
         return;   /* Not an OTA topic — ignore. */
 
+    /* Rejected request (bad URL, missing/invalid sha256): tell the cloud why. */
+    const char *reject = ota_parse_error(parsed);
+
+    if (reject)
+    {
+        printf("[OTA] Rejected %s update v%s: %s\n",
+               ota_type_name(req.type), req.version, reject);
+        ota_report_status(req.type, OTA_STATUS_FAILED, req.version, reject);
+        return;
+    }
+
     /* Reject if an update is already in progress. */
     pthread_mutex_lock(&ota_mutex);
 

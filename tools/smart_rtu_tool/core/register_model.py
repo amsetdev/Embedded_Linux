@@ -24,6 +24,12 @@ from typing import List, Optional
 VALID_REG_TYPES = {"holding", "input", "coil", "discrete"}
 VALID_DATA_TYPES = {"uint16", "int32", "float32"}
 
+# Firmware limits (inc/data.h): label is char[LABEL_MAX = 64] -> 63 UTF-8 bytes.
+LABEL_MAX_BYTES = 63
+# Modbus registers each data type occupies (32-bit types: Address and Address+1).
+REGISTER_WIDTH = {"uint16": 1, "int32": 2, "float32": 2}
+BIT_TABLES = {"coil", "discrete"}
+
 
 @dataclass
 class RegisterPoint:
@@ -38,6 +44,11 @@ class RegisterPoint:
         """Returns an error string if invalid, else None."""
         if not self.label or not self.label.strip():
             return "Label cannot be empty"
+        if len(self.label.encode("utf-8")) > LABEL_MAX_BYTES:
+            return (f"Label is {len(self.label.encode('utf-8'))} bytes; the firmware keeps "
+                    f"{LABEL_MAX_BYTES} (it would be cut)")
+        if '"' in self.label or "\\" in self.label:
+            return 'Label must not contain " or \\ (labels are telemetry JSON keys)'
         if self.address < 0 or self.address > 65535:
             return f"Address {self.address} out of range (0-65535)"
         if self.slave_id < 0 or self.slave_id > 247:
@@ -46,6 +57,11 @@ class RegisterPoint:
             return f"Invalid register_type '{self.register_type}'"
         if self.data_type not in VALID_DATA_TYPES:
             return f"Invalid data_type '{self.data_type}'"
+        width = REGISTER_WIDTH[self.data_type]
+        if self.register_type in BIT_TABLES and width > 1:
+            return f"{self.data_type} needs holding/input registers, not {self.register_type}"
+        if self.address + width - 1 > 65535:
+            return f"{self.data_type} at {self.address} needs register {self.address + width - 1} (max 65535)"
         return None
 
 
@@ -63,6 +79,8 @@ class DeviceConfig:
     # ---- Wi-Fi (board's own network, if applicable) -------------------
     wifi_ssid: str = ""
     wifi_password: str = ""
+    wifi_enable: int = 1
+    wifi_country: str = "IN"
 
     # ---- Modbus TCP (optional second protocol path) ------------------
     modbus_tcp_enable: int = 0
@@ -90,8 +108,8 @@ class DeviceConfig:
                 "type": p.register_type,
                 "data_type": p.data_type,
             }
-            if p.slave_id > 0:
-                r["slave_id"] = p.slave_id
+            # Always explicit: slave_id 0 in the tool means "the device's slave".
+            r["slave_id"] = p.slave_id if p.slave_id > 0 else self.slave_id
             regs.append(r)
 
         return {
@@ -106,6 +124,8 @@ class DeviceConfig:
             "wifi": {
                 "ssid": self.wifi_ssid,
                 "password": self.wifi_password,
+                "country": self.wifi_country,
+                "enable": self.wifi_enable,
             },
             "modbus_tcp": {
                 "enable": self.modbus_tcp_enable,
@@ -230,18 +250,27 @@ class DeviceConfig:
     def validate_all(self) -> List[str]:
         """Returns a list of error strings (empty list = all valid)."""
         errors = []
-        seen_addr = {}
+        used = {}          # (slave, table, register) -> row index of the first user
+        labels = {}
         for i, p in enumerate(self.points):
             err = p.validate()
             if err:
                 errors.append(f"Row {i+1} ({p.label or '?'}): {err}")
-            key = (p.slave_id, p.register_type, p.address)
-            if key in seen_addr:
-                errors.append(
-                    f"Row {i+1}: duplicate address {p.address} "
-                    f"(slave {p.slave_id}, {p.register_type}) "
-                    f"also used in row {seen_addr[key]+1}"
-                )
-            else:
-                seen_addr[key] = i
+                continue
+            if p.label in labels:
+                errors.append(f"Row {i+1}: duplicate label '{p.label}' (also row {labels[p.label]+1}); "
+                              f"labels are the telemetry keys")
+            labels.setdefault(p.label, i)
+            slave = p.slave_id if p.slave_id > 0 else self.slave_id
+            width = REGISTER_WIDTH[p.data_type]
+            for reg in range(p.address, p.address + width):
+                key = (slave, p.register_type, reg)
+                if key in used:
+                    errors.append(
+                        f"Row {i+1}: {p.data_type} at {p.address} overlaps register {reg} "
+                        f"(slave {slave}, {p.register_type}) of row {used[key]+1}"
+                    )
+                    break
+            for reg in range(p.address, p.address + width):
+                used.setdefault((slave, p.register_type, reg), i)
         return errors

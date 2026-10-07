@@ -61,16 +61,48 @@ ota_parse_result_t ota_parse_request(const char *topic, const char *payload,
     memset(req, 0, sizeof(*req));
     req->type = type;
 
-    json_get_string(payload, "url", req->url, sizeof(req->url));
+    /* Read one byte more than the field holds to detect a URL that doesn't fit. */
+    char url[sizeof(req->url) + 1];
+    url[0] = '\0';
+    json_get_string(payload, "url", url, sizeof(url));
     json_get_string(payload, "version", req->version, sizeof(req->version));
 
-    if (type == OTA_TYPE_APP)
-        json_get_string(payload, "sha256", req->sha256, sizeof(req->sha256));
-
-    if (req->url[0] == '\0')
+    if (url[0] == '\0')
         return OTA_REQ_MISSING_URL;
 
+    if (strlen(url) >= sizeof(req->url))
+        return OTA_REQ_URL_TOO_LONG;
+
+    memcpy(req->url, url, strlen(url) + 1);
+
+    if (strncasecmp(req->url, "https://", 8) != 0)
+        return OTA_REQ_BAD_URL;
+
+    if (type == OTA_TYPE_APP)
+    {
+        char sha[sizeof(req->sha256) + 1] = "";
+        json_get_string(payload, "sha256", sha, sizeof(sha));
+
+        size_t n = strlen(sha);
+        if (n != 64 || strspn(sha, "0123456789abcdefABCDEF") != 64)
+            return OTA_REQ_BAD_SHA256;
+
+        memcpy(req->sha256, sha, 65);
+    }
+
     return OTA_REQ_OK;
+}
+
+/* Documented in ota_logic.h. */
+const char *ota_parse_error(ota_parse_result_t result)
+{
+    switch (result)
+    {
+    case OTA_REQ_BAD_URL:      return "invalid_url";
+    case OTA_REQ_URL_TOO_LONG: return "url_too_long";
+    case OTA_REQ_BAD_SHA256:   return "invalid_sha256";
+    default:                   return NULL;
+    }
 }
 
 /* Documented in ota_logic.h. */
@@ -107,6 +139,12 @@ int ota_apply_app(const ota_app_ops_t *ops, const ota_request_t *req,
     char dl_path[512];
     snprintf(dl_path, sizeof(dl_path), "%s/main.new", download_dir);
 
+    if (req->sha256[0] == '\0')
+    {
+        ops->report(ops->ctx, OTA_STATUS_FAILED, req->version, "sha256_missing");
+        return 0;
+    }
+
     /* ---- Download ---- */
     ops->report(ops->ctx, OTA_STATUS_DOWNLOADING, req->version, "");
 
@@ -116,17 +154,14 @@ int ota_apply_app(const ota_app_ops_t *ops, const ota_request_t *req,
         return 0;
     }
 
-    /* ---- Verify SHA256 ---- */
-    if (req->sha256[0] != '\0')
-    {
-        ops->report(ops->ctx, OTA_STATUS_VERIFYING, req->version, "");
+    /* ---- Verify SHA256 (mandatory: never install an unverified binary) ---- */
+    ops->report(ops->ctx, OTA_STATUS_VERIFYING, req->version, "");
 
-        if (!ops->verify(ops->ctx, dl_path, req->sha256))
-        {
-            ops->unlink(ops->ctx, dl_path);
-            ops->report(ops->ctx, OTA_STATUS_FAILED, req->version, "sha256_mismatch");
-            return 0;
-        }
+    if (!ops->verify(ops->ctx, dl_path, req->sha256))
+    {
+        ops->unlink(ops->ctx, dl_path);
+        ops->report(ops->ctx, OTA_STATUS_FAILED, req->version, "sha256_mismatch");
+        return 0;
     }
 
     /* ---- Apply ---- */

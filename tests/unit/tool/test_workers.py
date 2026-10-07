@@ -92,6 +92,7 @@ def test_mqtt_push_failure_queues_config(fake):
     assert kind == "fail" and "queued locally" in msg
     (item,) = offline_queue.list_queued()
     assert item.device_id == "GW-1" and item.csv_content == config().to_full_config_csv_string()
+    assert item.json_content == config().to_full_config_json()
 
 
 def test_certificates_uploaded_before_config(fake, tmp_path):
@@ -159,25 +160,31 @@ def test_erase_stops_when_first_delete_fails(fake):
     assert out == [False] and fake.names() == ["delete_remote"]
 
 
-def test_retry_queue_removes_only_delivered(monkeypatch, qapp):
-    offline_queue.enqueue("GW-1", "csv-1")
-    offline_queue.enqueue("GW-2", "csv-2")
-    pushed = []
-
-    class Fake:
-        def __init__(self, *a, **k):
-            pass
-
-        def push_text(self, content, topic, ack_topic=""):
-            pushed.append((content, topic, ack_topic))
-            return TransportResult(topic.startswith("amset/GW-1/"), "x")
-
-    monkeypatch.setattr(mw, "MQTTTransport", Fake)
+def test_retry_queue_sends_json_and_removes_only_delivered(fake, qapp):
+    offline_queue.enqueue("GW-1", "csv-1", "json-1")
+    offline_queue.enqueue("GW-2", "csv-2", "json-2")
+    fake.results["push_combined_config"] = lambda dev, csv, js, **k: TransportResult(dev == "GW-1", "x")
     w = mw.RetryQueueWorker(MQTT)
     out = []
     w.finished.connect(out.append)
     w.run()
-    assert sorted(pushed) == [("csv-1", "amset/GW-1/config/set", "amset/GW-1/config/ack"),
-                              ("csv-2", "amset/GW-2/config/set", "amset/GW-2/config/ack")]
+    assert [(a, k) for n, a, k in fake.calls] == [(("GW-1", "csv-1", "json-1"), {"wait_ack_seconds": 3}),
+                                                  (("GW-2", "csv-2", "json-2"), {"wait_ack_seconds": 3})]
+    assert fake.made[0][0] == "mqtt"
     assert [i.device_id for i in offline_queue.list_queued()] == ["GW-2"]
-    assert sorted(out[0]) == ["GW-1: delivered", "GW-2: still pending (x)"]
+    assert out[0] == ["GW-1: delivered", "GW-2: still pending (x)"]
+
+
+def test_retry_keeps_old_csv_only_entries(fake, qapp):
+    offline_queue.enqueue("GW-1", "csv-1")
+    w = mw.RetryQueueWorker(MQTT)
+    out = []
+    w.finished.connect(out.append)
+    w.run()
+    assert fake.calls == [] and "push it again" in out[0][0]
+    assert len(offline_queue.list_queued()) == 1
+
+
+def test_mqtt_certificate_fields_reach_transport():
+    t = mw._make_transport("mqtt", {**MQTT, "ca_certs": "/ca", "certfile": "/crt", "keyfile": "/key"})
+    assert (t.ca_certs, t.certfile, t.keyfile) == ("/ca", "/crt", "/key")

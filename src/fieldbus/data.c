@@ -15,12 +15,17 @@
 #include <time.h>
 #include <unistd.h>
 #include <stdatomic.h>
+#include <limits.h>
+#include <math.h>
 
 /** @brief Registers parsed from smart_rtu_config.json by parse_registers(). */
 static ModbusPoint points[MAX_POINTS];
 
 /** @brief Number of valid entries in points[]. */
 static int point_count = 0;
+
+/** @brief Set by data_request_reload(); read_all_points() re-parses the registers. */
+static atomic_int reload_pending = 0;
 
 /* -------------------------------------------------------------------------- */
 /* Fieldbus driver state                                                      */
@@ -176,7 +181,7 @@ int parse_registers(void)
         return -1;
     }
 
-    char *p = strstr(json, "\"registers\"");
+    const char *p = strstr(json, "\"registers\"");
 
     if (p == NULL)
     {
@@ -207,22 +212,38 @@ int parse_registers(void)
         if (point_count >= MAX_POINTS)
             break;
 
+        /* Parse a copy of this register's object only: a key it lacks keeps
+         * its default instead of being read from the next register. */
+        const char *obj_end = json_value_end(p);
+
+        if (obj_end == NULL)
+            break;
+
+        size_t obj_len = (size_t)(obj_end - p) + 1;
+        char *obj = malloc(obj_len + 1);
+
+        if (obj == NULL)
+            break;
+
+        memcpy(obj, p, obj_len);
+        obj[obj_len] = '\0';
+
         json_get_string_from(
-            p,
+            obj,
             "label",
             points[point_count].label,
             sizeof(points[point_count].label));
 
         json_get_int_from(
-            p,
+            obj,
             "address",
             &points[point_count].address);
 
         char type_str[32] = "holding";
         char dtype_str[32] = "uint16";
 
-        json_get_string_from(p, "type", type_str, sizeof(type_str));
-        json_get_string_from(p, "data_type", dtype_str, sizeof(dtype_str));
+        json_get_string_from(obj, "type", type_str, sizeof(type_str));
+        json_get_string_from(obj, "data_type", dtype_str, sizeof(dtype_str));
 
         points[point_count].reg_type = reg_type_from_string(type_str);
         points[point_count].data_type = data_type_from_string(dtype_str);
@@ -233,7 +254,7 @@ int parse_registers(void)
 
         /* Per-register slave_id; default to global modbus_slave. */
         int sid = 0;
-        if (json_get_int_from(p, "slave_id", &sid) == 0 &&
+        if (json_get_int_from(obj, "slave_id", &sid) == 0 &&
             sid >= 1 && sid <= 247)
         {
             points[point_count].slave_id = sid;
@@ -245,12 +266,8 @@ int parse_registers(void)
 
         point_count++;
 
-        p = strchr(p, '}');
-
-        if (p == NULL)
-            break;
-
-        p++;
+        free(obj);
+        p = obj_end + 1;
     }
 
     free(json);
@@ -280,6 +297,26 @@ static fb_reg_type_t map_reg_type(RegType reg_type)
     case REG_HOLDING:
     default:           return FB_REG_HOLDING;
     }
+}
+
+/**
+ * @brief Converts a register float to int without undefined behaviour.
+ *
+ * NaN becomes 0; values beyond the int range are clamped to INT_MIN / INT_MAX
+ * (a plain (int) cast of such values is undefined in C).
+ *
+ * @param f Value read from the device.
+ * @return The value truncated toward zero, clamped.
+ */
+static int float_to_int(float f)
+{
+    if (isnan(f))
+        return 0;
+    if (f >= 2147483647.0f)
+        return INT_MAX;
+    if (f <= -2147483648.0f)
+        return INT_MIN;
+    return (int)f;
 }
 
 /*-----------------------------------------------------------*/
@@ -317,7 +354,7 @@ static int read_point_32bit(ModbusPoint *pt)
                 float fval;
                 memcpy(&fval, &raw, sizeof(fval));
                 pt->float_value = fval;
-                pt->value = (int)fval;
+                pt->value = float_to_int(fval);
             }
             else
             {
@@ -414,6 +451,11 @@ int read_point(ModbusPoint *pt)
 void read_all_points(void)
 {
     extern atomic_int running;
+
+    /* A reload requested by another thread runs here, in the polling thread,
+     * so points[] never changes during a read cycle. */
+    if (atomic_exchange(&reload_pending, 0))
+        parse_registers();
 
     int success = 0;
     int failed = 0;
@@ -538,4 +580,10 @@ int data_write_block(int slave_id,
             slave_id, start, count);
 
     return 0;
+}
+
+/* Documented in data.h. */
+void data_request_reload(void)
+{
+    atomic_store(&reload_pending, 1);
 }

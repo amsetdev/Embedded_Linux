@@ -2,6 +2,8 @@
  * the fieldbus driver interface. The driver is a fake: a register map per
  * (slave, table, address) and a number of failures to inject. */
 
+#include <limits.h>
+#include <math.h>
 #include <stdatomic.h>
 #include <string.h>
 
@@ -145,6 +147,23 @@ static void test_int32_above_2_pow_24_kept_exact(void)
     TEST_ASSERT_EQUAL_INT(16777217, p.value);   /* telemetry prints value (%d) for int32 */
 }
 
+static void test_nan_and_huge_float_converted_without_ub(void)
+{
+    /* Regression: value = (int)fval was undefined behaviour for NaN/Inf/out-of-range
+     * floats (caught here by -fsanitize=float-cast-overflow). */
+    ModbusPoint p = point(REG_HOLDING, 'f', 20, 1);
+    put_float(FB_REG_HOLDING, 20, NAN);
+    TEST_ASSERT_EQUAL_INT(1, read_point(&p));
+    TEST_ASSERT_TRUE(isnan(p.float_value));
+    TEST_ASSERT_EQUAL_INT(0, p.value);
+    put_float(FB_REG_HOLDING, 20, 1e20f);
+    read_point(&p);
+    TEST_ASSERT_EQUAL_INT(INT_MAX, p.value);
+    put_float(FB_REG_HOLDING, 20, -INFINITY);
+    read_point(&p);
+    TEST_ASSERT_EQUAL_INT(INT_MIN, p.value);
+}
+
 static void test_slave_switched_per_point(void)
 {
     ModbusPoint a = point(REG_HOLDING, 'w', 1, 3);
@@ -206,6 +225,7 @@ int main(void)
     RUN_TEST(test_float32_high_word_first);
     RUN_TEST(test_int32_high_word_first_and_signed);
     RUN_TEST(test_int32_above_2_pow_24_kept_exact);
+    RUN_TEST(test_nan_and_huge_float_converted_without_ub);
     RUN_TEST(test_slave_switched_per_point);
     RUN_TEST(test_retries_then_succeeds);
     RUN_TEST(test_failed_read_marked_invalid);

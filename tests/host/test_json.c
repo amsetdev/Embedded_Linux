@@ -8,7 +8,6 @@
 #include <unistd.h>
 
 #include "json.h"
-#include "known_issue.h"
 #include "unity.h"
 
 void setUp(void) {}
@@ -59,11 +58,55 @@ static void test_key_is_matched_with_quotes(void)
 
 static void test_escaped_quote_in_value(void)
 {
+    /* Regression: escapes were not decoded; a string stopped at the first '"'
+     * ("TEMP\"C" was read as "TEMP\"). */
     char v[32];
-    json_get_string("{\"label\": \"TEMP\\\"C\"}", "label", v, sizeof(v));
-    KNOWN_ISSUE(strcmp(v, "TEMP\"C") == 0,
-                "no unescaping: a string stops at the first '\"' (value read as 'TEMP\\'); "
-                "the validate rules forbid '\"' and '\\' in config strings");
+    TEST_ASSERT_EQUAL_INT(0, json_get_string("{\"label\": \"TEMP\\\"C\"}", "label", v, sizeof(v)));
+    TEST_ASSERT_EQUAL_STRING("TEMP\"C", v);
+}
+
+static void test_escapes_decoded(void)
+{
+    char v[64];
+    json_get_string("{\"k\": \"a\\\\b\\/c\\nd\\te\"}", "k", v, sizeof(v));
+    TEST_ASSERT_EQUAL_STRING("a\\b/c\nd\te", v);
+    json_get_string("{\"k\": \"\\u0041\\u00e9!\"}", "k", v, sizeof(v));
+    TEST_ASSERT_EQUAL_STRING("A?!", v);          /* ASCII kept, other code points '?' */
+    json_get_string("{\"url\": \"https:\\/\\/s3.example\\/main\"}", "url", v, sizeof(v));
+    TEST_ASSERT_EQUAL_STRING("https://s3.example/main", v);
+}
+
+static void test_unterminated_string_rejected(void)
+{
+    char v[16] = "keep";
+    TEST_ASSERT_EQUAL_INT(-1, json_get_string("{\"k\": \"abc", "k", v, sizeof(v)));
+    TEST_ASSERT_EQUAL_INT(-1, json_get_string("{\"k\": \"abc\\\"", "k", v, sizeof(v)));
+    TEST_ASSERT_EQUAL_STRING("keep", v);
+}
+
+static void test_value_end_skips_strings_and_nesting(void)
+{
+    const char *j = "{\"a\": \"}]\\\"{\", \"b\": [1, {\"c\": 2}]} tail";
+    const char *end = json_value_end(j);
+    TEST_ASSERT_NOT_NULL(end);
+    TEST_ASSERT_EQUAL_STRING("} tail", end);
+    TEST_ASSERT_EQUAL_STRING("]} tail", json_value_end(strchr(j, '[')));
+    TEST_ASSERT_NULL(json_value_end("{\"a\": 1"));
+    TEST_ASSERT_NULL(json_value_end("\"x\""));
+}
+
+static void test_object_dup_copies_only_that_object(void)
+{
+    const char *j = "{\"label\": \"wifi\", \"wifi\": {\"ssid\": \"x\"}, \"modbus_tcp\": {\"enable\": 1}}";
+    char *wifi = json_object_dup(j, "wifi");      /* skips "wifi" as a value */
+    TEST_ASSERT_NOT_NULL(wifi);
+    TEST_ASSERT_EQUAL_STRING("{\"ssid\": \"x\"}", wifi);
+    int v = 7;
+    TEST_ASSERT_EQUAL_INT(-1, json_get_int(wifi, "enable", &v));   /* not taken from modbus_tcp */
+    TEST_ASSERT_EQUAL_INT(7, v);
+    free(wifi);
+    TEST_ASSERT_NULL(json_object_dup(j, "mqtt"));
+    TEST_ASSERT_NULL(json_object_dup("{\"wifi\": 1}", "wifi"));
 }
 
 static void test_int_value(void)
@@ -96,8 +139,8 @@ static void test_int_from_string_or_bool_is_zero(void)
 
 static void test_search_continues_past_object_end(void)
 {
-    /* Documented behaviour the config format depends on (tests/validate): a key
-     * missing from one object is found in a later one. */
+    /* json_get_*() search to the end of the text: settings.c and data.c therefore
+     * pass a json_object_dup() copy (test_object_dup_copies_only_that_object). */
     int v = 0;
     const char *json = "{\"wifi\": {\"ssid\": \"x\"}, \"modbus_tcp\": {\"enable\": 1}}";
     TEST_ASSERT_EQUAL_INT(0, json_get_int(strstr(json, "\"wifi\""), "enable", &v));
@@ -156,6 +199,10 @@ int main(void)
     RUN_TEST(test_long_string_truncated_to_buffer);
     RUN_TEST(test_key_is_matched_with_quotes);
     RUN_TEST(test_escaped_quote_in_value);
+    RUN_TEST(test_escapes_decoded);
+    RUN_TEST(test_unterminated_string_rejected);
+    RUN_TEST(test_value_end_skips_strings_and_nesting);
+    RUN_TEST(test_object_dup_copies_only_that_object);
     RUN_TEST(test_int_value);
     RUN_TEST(test_int_missing_key);
     RUN_TEST(test_int_from_string_or_bool_is_zero);

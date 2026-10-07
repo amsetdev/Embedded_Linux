@@ -76,23 +76,27 @@ def test_push_csv_with_echo_writes_file(console):
     assert con.files[REMOTE_CONFIG_CSV_PATH] == tool_csv().replace("\r\n", "\n")
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the JSON has no trailing newline, so 'EOF' is appended to its last line ('}EOF'), "
-    "the heredoc never ends and the file is not written; with console echo the typed marker still "
-    "reports success"))
 def test_push_json_writes_file(console):
+    """Regression: the JSON has no trailing newline, so 'EOF' was appended to its last line,
+    the heredoc never ended and the file was not written (yet reported as written)."""
     con = console()
-    SerialTransport("/dev/ttyACM0").push_text(tool_json(), REMOTE_CONFIG_JSON_PATH)
+    r = SerialTransport("/dev/ttyACM0").push_text(tool_json(), REMOTE_CONFIG_JSON_PATH)
+    assert r.ok
     assert json.loads(con.files[REMOTE_CONFIG_JSON_PATH]) == json.loads(tool_json())
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the completion marker is part of the typed command, and the console echoes it, so a "
-    "failed 'mv' is reported as success"))
+def test_content_containing_eof_line_written(console):
+    con = console()
+    SerialTransport("/dev/ttyACM0").push_text("a\nEOF\nb\n", "/f")
+    assert con.files["/f"] == "a\nEOF\nb\n"
+
+
 def test_failed_write_not_reported_as_success(console):
+    """Regression: the completion marker was in the typed command and the console echoed it,
+    so a failed 'mv' was reported as success."""
     console(fail_mv=True)
     r = SerialTransport("/dev/ttyACM0").push_text("x\n", "/readonly/f")
-    assert not r.ok
+    assert not r.ok and "No completion marker" in r.message
 
 
 def test_failed_write_detected_without_echo(console, clock):
@@ -108,13 +112,18 @@ def test_read_text_without_echo(console):
     assert r.ok and r.message.strip() == '{"a": 1}'
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Known issue: the start/end markers are in the typed command, which the console echoes, so "
-    "read_text() returns the echoed command instead of the file"))
 def test_read_text_with_echo(console):
+    """Regression: the start/end markers were in the typed command, which the console
+    echoes, so read_text() returned the echoed command instead of the file."""
     console(files={REMOTE_CONFIG_JSON_PATH: '{"a": 1}\n'})
     r = SerialTransport("/dev/ttyACM0").read_text(REMOTE_CONFIG_JSON_PATH)
-    assert r.ok and r.message.strip() == '{"a": 1}'
+    assert r.ok and r.message == '{"a": 1}'
+
+
+def test_delete_remote_with_echo(console):
+    con = console(files={"/a": "x\n"})
+    assert SerialTransport("/dev/ttyACM0").delete_remote("/a").ok
+    assert con.files == {}
 
 
 def test_read_text_missing_file_without_echo(console):

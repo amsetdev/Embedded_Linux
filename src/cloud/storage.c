@@ -37,8 +37,11 @@
 /** @brief Size of the path buffers for files in STORAGE_DIR. */
 #define MAX_PATH             256
 
-/** @brief Seconds between attempts of the replay thread to publish stored payloads. */
+/** @brief Seconds between replay rounds (each sends up to SF_REPLAY_BATCH payloads). */
 #define REPLAY_INTERVAL_SEC  60
+
+/** @brief How long a replayed payload waits for the broker's PUBACK before it is kept for later. */
+#define REPLAY_PUBACK_TIMEOUT_MS  10000
 
 /** @brief Replay thread handle. */
 static pthread_t replay_thread;
@@ -173,7 +176,8 @@ static int fs_write(void *ctx, const char *name, const char *payload)
     char path[MAX_PATH];
     snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
 
-    FILE *f = fopen(path, "w");
+    /* "x": fail instead of overwriting an existing file. */
+    FILE *f = fopen(path, "wx");
 
     if (!f)
     {
@@ -181,22 +185,29 @@ static int fs_write(void *ctx, const char *name, const char *payload)
         return -1;
     }
 
-    fprintf(f, "%s", payload);
-    fclose(f);
+    int ok = fputs(payload, f) >= 0;
+
+    if (fclose(f) != 0 || !ok)
+    {
+        fprintf(stderr, "[SD_CARD] write %s failed\n", path);
+        remove(path);
+        return -1;
+    }
 
     printf("[SD_CARD] Stored → %s\n", path);
     return 0;
 }
 
 /**
- * @brief sf_ops_t.publish: mqtt_publish() (stores the payload again if it fails).
+ * @brief sf_ops_t.publish: publish and wait for the broker's PUBACK.
  * @param ctx Unused.
  * @param payload Payload to publish.
+ * @return 0 when the broker confirmed it, -1 otherwise (the file is kept).
  */
-static void fs_publish(void *ctx, const char *payload)
+static int fs_publish(void *ctx, const char *payload)
 {
     (void)ctx;
-    mqtt_publish(payload);
+    return mqtt_publish_confirmed(payload, REPLAY_PUBACK_TIMEOUT_MS);
 }
 
 /**
@@ -240,16 +251,19 @@ static const sf_ops_t fs_ops = {
  */
 void offline_store(const char *payload)
 {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+
     char name[SF_NAME_MAX];
-    sf_store(&fs_ops, payload, time(NULL), name);
+    sf_store(&fs_ops, payload, (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000, name);
 }
 
 /**
  * @brief Offline replay worker thread.
  *
  * Every REPLAY_INTERVAL_SEC, when MQTT and internet connectivity are
- * available, the oldest stored payload is published and removed from
- * storage (sf_replay_once()).
+ * available, up to SF_REPLAY_BATCH stored payloads are published oldest
+ * first; each file is removed once the broker confirmed it (sf_replay()).
  *
  * @param arg Unused thread argument.
  *
@@ -264,17 +278,27 @@ static void *replay_worker(void *arg)
         sleep(REPLAY_INTERVAL_SEC);
 
         char name[SF_NAME_MAX];
+        sf_replay_result_t last;
 
-        switch (sf_replay_once(&fs_ops, name))
+        int sent = sf_replay(&fs_ops, SF_REPLAY_BATCH, &last, name);
+
+        if (sent > 0)
+            printf("[SD_CARD] Replayed and deleted %d stored payload(s)\n", sent);
+
+        switch (last)
         {
         case SF_NOT_CONNECTED:
             printf("[SD_CARD] Not connected - replay skipped\n");
             break;
         case SF_NOTHING_PENDING:
-            printf("[SD_CARD] No pending files\n");
+            if (sent == 0)
+                printf("[SD_CARD] No pending files\n");
+            break;
+        case SF_PUBLISH_FAILED:
+            printf("[SD_CARD] %s not confirmed by the broker - kept for the next round\n", name);
             break;
         case SF_SENT:
-            printf("[SD_CARD] Deleted %s\n", name);
+            printf("[SD_CARD] Batch limit reached, more files pending\n");
             break;
         case SF_LIST_FAILED:
         case SF_READ_FAILED:

@@ -8,6 +8,7 @@
 
 #include "store_forward.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,14 +21,17 @@ int sf_is_payload_file(const char *name)
 }
 
 /* Documented in store_forward.h. */
-int sf_store(const sf_ops_t *ops, const char *payload, time_t now, char name[SF_NAME_MAX])
+int sf_store(const sf_ops_t *ops, const char *payload, long long now_ms, char name[SF_NAME_MAX])
 {
+    /* Sequence number: unique names within one millisecond, in storing order. */
+    static atomic_uint seq = 0;
+
     name[0] = '\0';
     if (!payload)
         return -1;
 
-    long long ms = (long long)now * 1000;
-    snprintf(name, SF_NAME_MAX, "%lld.txt", ms);
+    unsigned n = atomic_fetch_add(&seq, 1) % 1000000u;
+    snprintf(name, SF_NAME_MAX, "%013lld_%06u.txt", now_ms, n);
 
     return ops->write(ops->ctx, name, payload) == 0 ? 0 : -1;
 }
@@ -69,8 +73,32 @@ sf_replay_result_t sf_replay_once(const sf_ops_t *ops, char name[SF_NAME_MAX])
     if (!buf)
         return SF_READ_FAILED;
 
-    ops->publish(ops->ctx, buf);
+    int published = ops->publish(ops->ctx, buf);
     free(buf);
 
+    if (published != 0)
+        return SF_PUBLISH_FAILED;
+
     return ops->remove(ops->ctx, name) == 0 ? SF_SENT : SF_SENT_NOT_REMOVED;
+}
+
+/* Documented in store_forward.h. */
+int sf_replay(const sf_ops_t *ops, int max_files, sf_replay_result_t *last, char name[SF_NAME_MAX])
+{
+    int sent = 0;
+
+    *last = SF_NOTHING_PENDING;
+    name[0] = '\0';
+
+    while (sent < max_files)
+    {
+        *last = sf_replay_once(ops, name);
+
+        if (*last == SF_SENT)
+            sent++;
+        else
+            break;   /* offline, nothing left, or a failure: try again next round */
+    }
+
+    return sent;
 }

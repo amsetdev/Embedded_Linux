@@ -25,7 +25,8 @@ extern "C" {
  * @brief Builds the telemetry JSON for a set of points.
  *
  * Points with valid == 0 (failed reads) are left out. Values by data_type:
- * 'f' as "%.2f" of float_value, 'b' as true/false, everything else as the
+ * 'f' as "%.2f" of float_value (null if it is NaN or infinite), 'b' as
+ * true/false, everything else as the
  * integer value. Labels are inserted as they are (not escaped). Once fewer
  * than PAYLOAD_RESERVE bytes are left, the remaining points are left out.
  *

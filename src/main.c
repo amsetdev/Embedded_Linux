@@ -876,13 +876,16 @@ int main(void)
         /* SIGHUP hot-reload                                             */
         /* -------------------------------------------------------------- */
 
-        if (reload_requested)
+        if (reload_requested || settings_take_reload_request())
         {
             reload_requested = 0;
 
-            printf("[MAIN] SIGHUP received -- reloading configuration\n");
+            printf("[MAIN] Reload requested (SIGHUP or config push) -- reloading configuration\n");
 
             settings_reload();
+
+            /* Registers are re-read by the polling thread at its next cycle. */
+            data_request_reload();
 
             mqtt_cleanup();
             mqtt_init();
