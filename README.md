@@ -23,70 +23,39 @@ docker build -t stm32mp1-build .
 docker run --rm -v ${PWD}:/project stm32mp1-build
 ```
 
-The ARM binary is output at `build/main` and all required shared libraries are collected into `build/lib/`.
+The ARM binary is output at `build/main`, its runtime libraries in `build/lib/`.
 
 ## Build Commands
 
 | Action | Command |
 |--------|---------|
 | Build | `docker run --rm -v ${PWD}:/project stm32mp1-build` |
-| Build + Deploy (full) | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make flash` |
-| Deploy binary only | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy` |
-| Deploy libraries only | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy-libs` |
+| Installable package (`build/gateway-<ver>.tar.gz`) | `docker run --rm -v ${PWD}:/project stm32mp1-build make package` |
+| Build + install on a board | `docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make install-board BOARD=root@<board-ip>` |
 | Clean | `docker run --rm -v ${PWD}:/project stm32mp1-build make clean` |
 | Shell | `docker run --rm -it -v ${PWD}:/project stm32mp1-build bash` |
 
-Replace `<password>` with the board's root SSH password.
+Replace `<password>` with the board's root SSH password (or use an SSH key and drop `-e SSHPASS`).
+After changing `tools/ci/install_toolchain.sh`, rebuild the image (`docker build -t stm32mp1-build .`).
 
 **Note (Windows):** If `${PWD}` doesn't mount correctly in Git Bash, use `$(pwd -W)` instead. In PowerShell, `${PWD}` works as-is.
 
-## Deploy Configuration
+## On the Board
 
-The board connection is configured in `makefile`:
-
-```makefile
-BOARD_USER := root
-BOARD_IP   := 192.168.0.103
-BOARD_DIR  := /home/root/edb_c/linking/
-```
-
-Update `BOARD_IP` to match your board's IP address. You can also override at runtime:
+The application is installed as a systemd service by `deploy/install.sh`:
+`/opt/gateway/bin/gateway`, configuration in `/etc/gateway/`, data in `/var/lib/gateway/`,
+logs in journald. Layout, install, update, rollback and the migration from the old
+`/home/root/edb_c/linking` setup: **[`DOCS/DEPLOYMENT.md`](DOCS/DEPLOYMENT.md)**.
 
 ```bash
-docker run --rm -v ${PWD}:/project --network host -e SSHPASS=<password> stm32mp1-build make deploy BOARD_IP=<your-board-ip>
+systemctl status gateway          # running?
+journalctl -u gateway -f          # logs
+systemctl reload gateway          # re-read config + registers (SIGHUP)
+/opt/gateway/bin/gateway --version
 ```
 
-## Shared Library Deployment
-
-The board runs a minimal OpenSTLinux (Yocto-based) image that does not include libraries like libmodbus or libmosquitto. The build system handles this automatically:
-
-1. **`make all`** (or the default Docker CMD) compiles the binary and then runs `collect-libs`, which uses `scripts/collect-libs.sh` to recursively resolve every shared library dependency from the Docker cross-compilation sysroot and copies them into `build/lib/`.
-
-2. **`make deploy-libs`** copies all `.so` files from `build/lib/` to `/usr/lib` on the board and runs `ldconfig` to update the linker cache.
-
-3. **`make flash`** does everything in one shot: clean, build, deploy libraries, deploy binary.
-
-Libraries only need to be deployed once (or when you update the Dockerfile / add new library dependencies). After the initial `deploy-libs`, subsequent deploys can use `make deploy` to push just the binary.
-
-## Running on the Board
-
-```bash
-# SSH into the board
-ssh root@<board-ip>
-
-# Run the binary
-cd /home/root/edb_c/linking/
-./main
-
-# Run in background
-nohup ./main > main.log 2>&1 &
-
-# Check if running
-ps aux | grep main
-
-# Stop
-killall main
-```
+CI/CD, tests and the release process: [`DOCS/CI_CD_GUIDE.md`](DOCS/CI_CD_GUIDE.md),
+[`DOCS/TESTS_GUIDE.md`](DOCS/TESTS_GUIDE.md).
 
 ## Project Structure
 
@@ -124,7 +93,8 @@ Embedded_Linux/
 │   ├── main                    ARM binary
 │   └── lib/                    Collected armhf shared libraries for deployment
 ├── Dockerfile                  Cross-compilation environment (Ubuntu 22.04, armhf)
-├── makefile                    Build, deploy, deploy-libs, flash targets
+├── makefile                    Build, package, install-board targets
+├── deploy/                     gateway.service, install.sh (board installer)
 └── CLAUDE.md                   AI assistant project instructions
 ```
 
@@ -160,8 +130,8 @@ python run.py
 | Problem | Solution |
 |---------|----------|
 | `docker build` fails with 404 on armhf packages | Check internet connection; the Dockerfile fetches from `ports.ubuntu.com` |
-| `Host key verification failed` on deploy | Already handled — makefile uses `-o StrictHostKeyChecking=no` |
-| `Permission denied` on deploy | Pass the password: `-e SSHPASS=<password>` |
-| `libXXX.so: cannot open shared object file` on board | Run `make deploy-libs` to copy all shared libraries to the board |
+| `Host key verification failed` on install | The board was re-flashed: `ssh-keygen -R <board-ip>` |
+| `Permission denied` on install | Pass the password: `-e SSHPASS=<password>`, or install an SSH key |
+| `libXXX.so: cannot open shared object file` on board | Reinstall the package (`/opt/gateway/lib` is missing a library); never copy libraries into `/usr/lib` |
 | `${PWD}` volume mount is empty in Docker | Use `$(pwd -W)` in Git Bash on Windows |
 | Docker commands fail with 500 error | Start Docker Desktop and wait for it to fully initialize |

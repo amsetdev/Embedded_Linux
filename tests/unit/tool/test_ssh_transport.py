@@ -4,7 +4,7 @@ import paramiko
 import pytest
 
 import core.ssh_transport as ssh_mod
-from core import REMOTE_APP_DIR, REMOTE_CONFIG_CSV_PATH, REMOTE_CONFIG_JSON_PATH
+from core import REMOTE_CONFIG_CSV_PATH, REMOTE_CONFIG_DIR, REMOTE_CONFIG_JSON_PATH
 from core.ssh_transport import SSHTransport
 from fakes import FakeBoardFS, ssh_client_factory
 
@@ -50,7 +50,7 @@ def test_push_text_reports_rename_failure(board, ssh, monkeypatch):
 
 def test_push_combined_config_writes_both_files(board, ssh):
     r = ssh.push_combined_config("csv-content", "{}")
-    assert r.ok and REMOTE_APP_DIR in r.message
+    assert r.ok and REMOTE_CONFIG_DIR in r.message
     assert board.files == {REMOTE_CONFIG_CSV_PATH: b"csv-content", REMOTE_CONFIG_JSON_PATH: b"{}"}
 
 
@@ -91,14 +91,25 @@ def test_delete_remote(board, ssh):
     assert "/a" not in board.files
 
 
-def test_restart_app_kills_and_relaunches_in_app_dir(board, ssh):
-    assert ssh.restart_app().ok
-    (cmd,) = board.commands
-    assert cmd.startswith("pkill -f ./main")
-    assert f"cd {REMOTE_APP_DIR} && nohup ./main" in cmd
+def test_config_written_to_production_paths():
+    assert REMOTE_CONFIG_JSON_PATH == "/etc/gateway/smart_rtu_config.json"
+    assert REMOTE_CONFIG_CSV_PATH == "/etc/gateway/smart_rtu_config.csv"
 
 
-def test_log_tail(board, ssh):
-    board.files[f"{REMOTE_APP_DIR}/main.log"] = b"line1\nline2\n"
+def test_restart_restarts_the_systemd_service(board, ssh):
+    r = ssh.restart_app()
+    assert r.ok and "restarted" in r.message
+    assert board.commands == ["systemctl restart gateway"]
+
+
+def test_restart_failure_reported(board, ssh):
+    board.service_fails = True
+    r = ssh.restart_app()
+    assert not r.ok and "gateway.service failed" in r.message
+
+
+def test_log_tail_from_journal(board, ssh):
+    board.journal = b"line1\nline2\n"
     r = ssh.read_remote_log_tail(5)
     assert r.ok and r.message == "line1\nline2\n"
+    assert board.commands == ["journalctl -u gateway -n 5 --no-pager -o cat"]

@@ -24,7 +24,7 @@ build-firmware:
   before_script:
     - bash tools/ci/install_toolchain.sh
   script:
-    - set -o pipefail; make clean all 2>&1 | tee build.log
+    - set -o pipefail; make clean package 2>&1 | tee build.log
     - mv build.log build/build.log
     # Must be a 32-bit ARM hard-float ELF for the Cortex-A7
     - file build/main
@@ -37,6 +37,7 @@ build-firmware:
     paths:
       - build/main
       - build/lib/
+      - build/gateway-*.tar.gz      # installable package (deploy/install.sh)
       - build/build_info.json
       - build/build.log
 

@@ -26,6 +26,7 @@ REPO = Path(__file__).resolve().parents[2]
 HARNESS = REPO / "tests" / "validate" / "fw_config_dump.c"
 FIRMWARE_SOURCES = [
     REPO / "src" / "util" / "settings.c",
+    REPO / "src" / "util" / "paths.c",
     REPO / "src" / "util" / "json.c",
     REPO / "src" / "fieldbus" / "data.c",
 ]

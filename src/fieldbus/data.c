@@ -8,6 +8,7 @@
 #include "data.h"
 #include "settings.h"
 #include "json.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,7 +175,7 @@ static char data_type_from_string(const char *s)
 
 int parse_registers(void)
 {
-    char *json = read_file(SETTINGS_FILE);
+    char *json = read_file(paths_config());
 
     if (json == NULL)
     {

@@ -7,7 +7,8 @@
 
 Produces in <out_dir>:
     stm32mp1-gateway_<ver>              the application binary (what app OTA downloads)
-    stm32mp1-gateway_<ver>_libs.tar.gz  runtime libraries (build/lib) for `make deploy-libs`
+    gateway-<ver>.tar.gz                installable package: bin/gateway, lib/, gateway.service,
+                                        install.sh, VERSION (DOCS/DEPLOYMENT.md)
     build_info.json, SHA256SUMS
     ota_command.json                    MQTT app-OTA payload {version, url, sha256}
     release_notes.md                    version, commit, checksums, how to deploy
@@ -67,11 +68,15 @@ def sha256(path):
 
 def check_build(build, version):
     """The build artifacts are complete and belong to this version; returns build_info."""
-    for rel in ("main", "build_info.json"):
+    for rel in ("main", "build_info.json", f"gateway-{version}.tar.gz"):
         if not (build / rel).is_file():
             sys.exit(f"missing build artifact: {build / rel} (download the build-firmware artifacts)")
-    if not (build / "lib").is_dir() or not any((build / "lib").iterdir()):
-        sys.exit(f"missing build artifact: {build / 'lib'}/ (runtime libraries)")
+    with tarfile.open(build / f"gateway-{version}.tar.gz") as tar:
+        names = set(n.lstrip("./") for n in tar.getnames())
+    missing = {"bin/gateway", "install.sh", "gateway.service", "VERSION"} - names
+    if missing or not any(n.startswith("lib/") and n != "lib/" for n in names):
+        sys.exit(f"installable package gateway-{version}.tar.gz is incomplete (missing: "
+                 f"{', '.join(sorted(missing)) or 'lib/*'})")
 
     info = json.loads((build / "build_info.json").read_text())
     if info.get("app_version") != version:
@@ -98,13 +103,13 @@ def package(build, out, version):
     binary.chmod(0o755)
     shutil.copy2(build / "build_info.json", out / "build_info.json")
 
-    libs = out / f"{stem}_libs.tar.gz"
-    lib_files = sorted(p for p in (build / "lib").iterdir() if p.is_file())
-    with tarfile.open(libs, "w:gz") as tar:
-        for p in lib_files:
-            tar.add(p, arcname=f"lib/{p.name}")
+    pkg = out / f"gateway-{version}.tar.gz"
+    shutil.copy2(build / pkg.name, pkg)
+    with tarfile.open(pkg) as tar:
+        lib_files = sorted(Path(m.name).name for m in tar.getmembers()
+                           if m.isfile() and m.name.lstrip("./").startswith("lib/"))
 
-    names = sorted([binary.name, libs.name, "build_info.json"])
+    names = sorted([binary.name, pkg.name, "build_info.json"])
     sums = "".join(f"{sha256(out / n)}  {n}\n" for n in names)
     (out / "SHA256SUMS").write_text(sums)
 
@@ -117,7 +122,7 @@ def package(build, out, version):
     assert re.fullmatch(r"[0-9a-f]{64}", ota["sha256"])   # what ota_parse_request() requires
     (out / "ota_command.json").write_text(json.dumps(ota, indent=2) + "\n")
 
-    lib_list = "\n".join(f"- `{p.name}`" for p in lib_files)
+    lib_list = "\n".join(f"- `{n}`" for n in lib_files)
     notes = f"""## STM32MP1 gateway {version}
 
 | | |
@@ -136,15 +141,16 @@ def package(build, out, version):
    the device refuses a command without a valid sha256 or a non-https URL.
 3. The device reports progress on `devices/<device_id>/ota/status` and restarts with the new binary.
 
-### Install manually (SSH)
+### Install or update over SSH (new board, or a board on the legacy layout)
 ```
-tar -xzf {libs.name}                 # lib/*.so*  -> /usr/lib on the board, then ldconfig
-scp {binary.name} root@<board>:/home/root/edb_c/linking/main.new
-ssh root@<board> 'mv -f /home/root/edb_c/linking/main.new /home/root/edb_c/linking/main'
+scp {pkg.name} root@<board>:/tmp/
+ssh root@<board> 'mkdir -p /tmp/gw && tar -C /tmp/gw -xzf /tmp/{pkg.name} && sh /tmp/gw/install.sh'
 ```
-(or `make deploy-libs deploy` from a checkout of this tag)
+Installs `/opt/gateway`, `/etc/gateway`, `/var/lib/gateway` and `gateway.service`; a legacy
+install in `/home/root/edb_c/linking` is migrated (config, certificates, buffered data).
+`sh install.sh --rollback` returns to the previous binary. See `DOCS/DEPLOYMENT.md`.
 
-### Runtime libraries in `{libs.name}`
+### Bundled runtime libraries (`/opt/gateway/lib`)
 {lib_list}
 
 ### Checksums

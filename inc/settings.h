@@ -19,9 +19,7 @@ extern "C" {
 /* Configuration File                                                         */
 /* -------------------------------------------------------------------------- */
 
-/**
- * @brief Smart RTU configuration file.
- */
+/** @brief Legacy name of the default configuration file; the file in use is paths_config(). */
 #define SETTINGS_FILE "smart_rtu_config.json"
 
 /* -------------------------------------------------------------------------- */
@@ -100,13 +98,13 @@ extern "C" {
 /** @brief Default OTA status report topic pattern. */
 #define OTA_STATUS_TOPIC_DEF   "devices/%s/ota/status"
 
-/** @brief Default OTA download directory. */
+/** @brief Unused: the default OTA download directory is \<data dir\>/ota (paths_data()). */
 #define OTA_DOWNLOAD_DIR_DEF   "/tmp/ota"
 
 /** @brief Default application version string. */
 #define APP_VERSION_DEF        "1.0.0"
 
-/** @brief Default application binary path on board. */
+/** @brief Fallback for the binary OTA replaces when /proc/self/exe can't be read. */
 #define APP_BINARY_PATH_DEF    "/home/root/edb_c/linking/main"
 
 /* -------------------------------------------------------------------------- */

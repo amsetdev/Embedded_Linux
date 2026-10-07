@@ -35,6 +35,7 @@ SRCS    := $(SRC_DIR)/main.c                    \
            $(SRC_DIR)/ui/display.c               \
            $(SRC_DIR)/util/json.c                \
            $(SRC_DIR)/util/settings.c            \
+           $(SRC_DIR)/util/paths.c               \
            $(SRC_DIR)/util/msg_queue.c           \
            $(SRC_DIR)/util/drive_logger.c
 
@@ -63,33 +64,33 @@ LDFLAGS := -L/usr/lib/arm-linux-gnueabihf \
             -lcurl      \
             -ldl        \
             -lz         \
-            -lm         
+            -lm         \
+            -Wl,--disable-new-dtags,-rpath,'$$ORIGIN/../lib'
+# RPATH $ORIGIN/../lib: installed as /opt/gateway/bin/gateway, the binary loads the
+# libraries bundled in /opt/gateway/lib first (DT_RPATH, also for their dependencies)
+# and never needs anything copied into the OS's /usr/lib.
             
 
-# --- Board Deploy ---
-BOARD_USER := root
-BOARD_IP   := 192.168.1.8
-BOARD_DIR  := /home/root/edb_c/linking/
-BOARD_LIB_DIR := /usr/lib
+# --- Board install (DOCS/DEPLOYMENT.md) ---
+# make install-board BOARD=root@192.168.1.26     (SSH key, or SSHPASS in the environment)
+BOARD      ?=
+SSH_OPTS   := -o StrictHostKeyChecking=accept-new
+SSHPASS_E  := $(if $(SSHPASS),sshpass -e,)
 
-# --- Runtime shared libraries to deploy ---
-# These are the armhf .so files the binary needs at runtime.
-# System libs (pthread, m, dl, z) are already on the board.
-SYSROOT_LIB := /usr/lib/arm-linux-gnueabihf
+# --- Package (deploy/install.sh installs it) ---
+VERSION    := $(shell sed -n 's/^\#define APP_VERSION_DEF *"\(.*\)"/\1/p' $(INC_DIR)/settings.h)
+PKG_DIR    := $(BUILD_DIR)/package
+PKG_TAR    := $(BUILD_DIR)/gateway-$(VERSION).tar.gz
+
+# --- Runtime shared libraries ---
+# armhf libraries the binary needs (scripts/collect-libs.sh skips glibc and libgcc_s).
 LIB_DIR     := $(BUILD_DIR)/lib
-
-DEPLOY_LIBS := libmodbus.so.5    \
-               libmosquitto.so.1 \
-               libsqlite3.so.0   \
-               libssl.so.3       \
-               libcrypto.so.3    \
-               libcurl.so.4
 
 # ============================================================
 #  Targets
 # ============================================================
 
-.PHONY: all clean deploy deploy-libs flash collect-libs
+.PHONY: all clean collect-libs package install-board flash
 
 ## Build → build/main + build/lib/*.so
 all: $(BUILD_DIR) $(BUILD_SUBDIRS) $(TARGET) collect-libs
@@ -119,23 +120,21 @@ clean:
 	rm -rf $(BUILD_DIR)
 	@echo " Cleaned"
 
-## Copy binary to board
-deploy:
-	sshpass -e ssh -o StrictHostKeyChecking=no $(BOARD_USER)@$(BOARD_IP) 'mkdir -p $(BOARD_DIR)'
-	sshpass -e scp -o StrictHostKeyChecking=no $(TARGET) $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)/main.new
-	sshpass -e ssh -o StrictHostKeyChecking=no $(BOARD_USER)@$(BOARD_IP) 'mv -f $(BOARD_DIR)/main.new $(BOARD_DIR)/main'
-	@echo " Deployed binary to $(BOARD_USER)@$(BOARD_IP):$(BOARD_DIR)"
+## Installable package: build/package/ and build/gateway-<version>.tar.gz
+package: all
+	rm -rf $(PKG_DIR) && mkdir -p $(PKG_DIR)/bin
+	cp $(TARGET) $(PKG_DIR)/bin/gateway
+	cp -a $(LIB_DIR) $(PKG_DIR)/lib
+	cp deploy/gateway.service deploy/install.sh $(PKG_DIR)/
+	echo "$(VERSION)" > $(PKG_DIR)/VERSION
+	tar -C $(PKG_DIR) -czf $(PKG_TAR) .
+	@echo " Package → $(PKG_TAR)"
 
-## Copy runtime .so files to board and run ldconfig
-deploy-libs:
-	@if [ -d "$(LIB_DIR)" ] && [ "$$(ls -A $(LIB_DIR) 2>/dev/null)" ]; then \
-		echo " Deploying shared libraries…"; \
-		sshpass -e scp -o StrictHostKeyChecking=no $(LIB_DIR)/*.so* $(BOARD_USER)@$(BOARD_IP):$(BOARD_LIB_DIR)/; \
-		sshpass -e ssh -o StrictHostKeyChecking=no $(BOARD_USER)@$(BOARD_IP) 'ldconfig'; \
-		echo " Libraries deployed and ldconfig updated"; \
-	else \
-		echo " No libraries to deploy (run 'make all' first)"; \
-	fi
+## Copy the package to BOARD and run install.sh there (needs ssh/scp on this PC)
+install-board: package
+	@test -n "$(BOARD)" || (echo "usage: make install-board BOARD=root@<board-ip>" && false)
+	$(SSHPASS_E) scp $(SSH_OPTS) $(PKG_TAR) $(BOARD):/tmp/gateway-pkg.tar.gz
+	$(SSHPASS_E) ssh $(SSH_OPTS) $(BOARD) 'rm -rf /tmp/gateway-pkg && mkdir /tmp/gateway-pkg && tar -C /tmp/gateway-pkg -xzf /tmp/gateway-pkg.tar.gz && sh /tmp/gateway-pkg/install.sh && rm -rf /tmp/gateway-pkg /tmp/gateway-pkg.tar.gz'
 
-## Build + deploy everything in one shot
-flash: clean all deploy-libs deploy
+## Build + install in one shot
+flash: clean install-board

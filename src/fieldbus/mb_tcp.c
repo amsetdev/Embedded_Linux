@@ -1,4 +1,5 @@
 #include "mb_tcp.h"
+#include "paths.h"
 #include "watchdog.h"
 
 #include <stdio.h>
@@ -39,7 +40,10 @@ typedef struct {
  */
 static int db_init(sqlite3 **db)
 {
-    int rc = sqlite3_open(DB_PATH, db);
+    char db_path[PATHS_MAX + 32];
+    paths_data(DB_FILE, db_path, sizeof(db_path));
+
+    int rc = sqlite3_open(db_path, db);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "[DB ] Cannot open database: %s\n",
                 sqlite3_errmsg(*db));
@@ -62,7 +66,7 @@ static int db_init(sqlite3 **db)
         return -1;
     }
 
-    printf("[ MODBUS_TCP ] Initialised → %s\n", DB_PATH);
+    printf("[ MODBUS_TCP ] Initialised → %s\n", db_path);
     return 0;
 }
 

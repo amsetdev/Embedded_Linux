@@ -17,6 +17,7 @@
 #include "ota.h"
 #include "config_push.h"
 #include "json.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -129,7 +130,7 @@ int mqtt_publish_confirmed(const char *payload, int timeout_ms)
 static char *cp_read_current(void *ctx)
 {
     (void)ctx;
-    return read_file(SETTINGS_FILE);
+    return read_file(paths_config());
 }
 
 /**
@@ -142,7 +143,8 @@ static char *cp_read_current(void *ctx)
 static int cp_write_atomic(void *ctx, const char *content, size_t len)
 {
     (void)ctx;
-    const char *tmp = SETTINGS_FILE ".tmp";
+    char tmp[PATHS_MAX + 8];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", paths_config());
 
     FILE *f = fopen(tmp, "w");
     if (!f)
@@ -153,9 +155,9 @@ static int cp_write_atomic(void *ctx, const char *content, size_t len)
 
     int ok = fwrite(content, 1, len, f) == len && fflush(f) == 0 && fsync(fileno(f)) == 0;
 
-    if (fclose(f) != 0 || !ok || rename(tmp, SETTINGS_FILE) != 0)
+    if (fclose(f) != 0 || !ok || rename(tmp, paths_config()) != 0)
     {
-        fprintf(stderr, "[MQTT] Config push: writing %s failed: %s\n", SETTINGS_FILE, strerror(errno));
+        fprintf(stderr, "[MQTT] Config push: writing %s failed: %s\n", paths_config(), strerror(errno));
         remove(tmp);
         return -1;
     }

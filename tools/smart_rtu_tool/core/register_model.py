@@ -7,7 +7,7 @@ settings, and the register list with per-register slave_id, type, and
 data_type for multi-slave support.
 
 Everything is delivered to the board as ONE combined file in both a
-.csv and a .json version, written to /home/root/edb_c/linking/ as:
+.csv and a .json version, written to /etc/gateway/ (DOCS/DEPLOYMENT.md) as:
 
     smart_rtu_config.csv
     smart_rtu_config.json
@@ -92,9 +92,9 @@ class DeviceConfig:
     mqtt_broker: str = ""
     mqtt_port: int = 8883
     mqtt_client_id: str = ""
-    mqtt_ca_cert: str = "/home/root/edb_c/linking/ca.crt"
-    mqtt_device_cert: str = "/home/root/edb_c/linking/client.crt"
-    mqtt_private_key: str = "/home/root/edb_c/linking/private.key"
+    mqtt_ca_cert: str = "/etc/gateway/certs/ca.crt"
+    mqtt_device_cert: str = "/etc/gateway/certs/client.crt"
+    mqtt_private_key: str = "/etc/gateway/certs/private.key"
     mqtt_topic: str = ""
 
     # ---- Combined config file (Wi-Fi + Device + Registers,

@@ -24,9 +24,10 @@ FW_store_forward := $(SRC)/cloud/store_forward.c
 FW_ota_logic     := $(SRC)/cloud/ota_logic.c $(SRC)/util/json.c
 FW_config_push   := $(SRC)/cloud/config_push.c $(SRC)/util/json.c
 FW_msg_queue     := $(SRC)/util/msg_queue.c
-FW_data_read     := $(SRC)/fieldbus/data.c $(SRC)/util/settings.c $(SRC)/util/json.c
+FW_data_read     := $(SRC)/fieldbus/data.c $(SRC)/util/settings.c $(SRC)/util/json.c $(SRC)/util/paths.c
+FW_paths         := $(SRC)/util/paths.c
 
-TESTS := json payload store_forward ota_logic config_push msg_queue data_read
+TESTS := json payload store_forward ota_logic config_push msg_queue data_read paths
 BINS  := $(addprefix $(OUT)/test_,$(TESTS))
 
 .PHONY: all run clean

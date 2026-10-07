@@ -72,7 +72,8 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `tests/static/srcs.py` | reads `SRCS` from the makefile: the static gates check exactly what is built |
 | `tests/static/compiler-warnings-baseline.json` | warnings accepted (8 left) |
 | `Dockerfile` | local build environment (same packages via `install_toolchain.sh`) |
-| `makefile` | build (`all`), `-Wall -Wextra` in `WARNINGS`, deploy targets |
+| `deploy/gateway.service`, `deploy/install.sh` | systemd unit and board installer (`DEPLOYMENT.md`) |
+| `makefile` | build (`all`), `-Wall -Wextra` in `WARNINGS`, RPATH, `package`, `install-board` |
 | `scripts/collect-libs.sh` | copies every non-libc runtime `.so` the binary needs into `build/lib/` |
 
 ---
@@ -166,23 +167,24 @@ local image and CI stay identical only if you do.
 
 1. `bash tools/ci/install_toolchain.sh` in `ubuntu:22.04` (gcc 11.4
    `arm-linux-gnueabihf`, armhf `-dev` packages from `ports.ubuntu.com`).
-2. `make clean all` → `build/main` + `build/lib/*.so*` (via `scripts/collect-libs.sh`).
+2. `make clean package` → `build/main`, `build/lib/*.so*` (via `scripts/collect-libs.sh`)
+   and the installable package `build/gateway-<version>.tar.gz` (binary, libraries,
+   `deploy/gateway.service`, `deploy/install.sh`; layout in `DEPLOYMENT.md`).
    The full log goes to `build/build.log`.
 3. Checks that `build/main` is a **32-bit ARM EABI5 hard-float** ELF
    (interpreter `ld-linux-armhf.so.3`).
 4. `tools/ci/build_info.py build` → `build/build_info.json`.
 
-**Artifacts** (4 weeks): `build/main`, `build/lib/`, `build/build_info.json`,
-`build/build.log`.
+**Artifacts** (4 weeks): `build/main`, `build/lib/`, `build/gateway-<version>.tar.gz`,
+`build/build_info.json`, `build/build.log`.
 
 `build_info.json` records: `app_version` (`APP_VERSION_DEF` in `inc/settings.h`),
 commit, ref, pipeline, UTC time, compiler version, `file` output, size and
 **SHA256 of the binary and of every library in `build/lib/`**. To check what a
-board runs: `sha256sum /home/root/edb_c/linking/main` on the board and compare.
+board runs: `sha256sum /opt/gateway/bin/gateway` on the board and compare.
 
 **Secrets**: none. The MQTT certificate, key and CA are **read at runtime from
-the board** (`/home/root/edb_c/linking/{client.crt,private.key,ca.crt}`, paths in
-`smart_rtu_config.json`); nothing is compiled in. Unlike `std_gw`, CI never needs
+the board** (`/etc/gateway/certs/`, paths in `smart_rtu_config.json`); nothing is compiled in. Unlike `std_gw`, CI never needs
 the device identity to build.
 
 **Built sources**: the 22 files in `SRCS` in the `makefile`.
@@ -438,7 +440,7 @@ normal assertion (§6).
   | File | What |
   |---|---|
   | `stm32mp1-gateway_<ver>` | the application binary = what app OTA downloads |
-  | `stm32mp1-gateway_<ver>_libs.tar.gz` | `lib/*.so*` from `build/lib/` for `make deploy-libs` / `/usr/lib` |
+  | `gateway-<ver>.tar.gz` | installable package: binary, bundled libraries, `gateway.service`, `install.sh` (`DEPLOYMENT.md`) |
   | `build_info.json`, `SHA256SUMS` | provenance and checksums |
   | `ota_command.json` | `{"url", "version", "sha256"}` for `devices/<device_id>/ota/app`; `sha256` is the binary's |
   | `release_notes.md` | version, commit, compiler, size, OTA and manual install steps, library list, checksums |
@@ -589,9 +591,9 @@ Rebuild your local image.
 
 | File | What it is | In git? | Where it lives |
 |---|---|---|---|
-| `client.crt`, `private.key` | AWS IoT device identity | **no** (removed, `.gitignore`: `*.crt`, `*.key`) | on each board in `/home/root/edb_c/linking/`; uploaded by the Smart RTU tool |
+| `client.crt`, `private.key` | AWS IoT device identity | **no** (removed, `.gitignore`: `*.crt`, `*.key`) | on each board in `/etc/gateway/certs/` (0600); uploaded by the Smart RTU tool |
 | `ca.crt` | AWS root CA (public) | no (`*.crt` rule) | on the board, same folder |
-| `.env` | `SSHPASS` for `make deploy` / `deploy-libs` / `flash` (`sshpass -e`) | **no** | your PC only |
+| `.env` | `SSHPASS` for `make install-board` (`sshpass -e`) | **no** | your PC only |
 
 Backup of the removed files: `~/Embedded_Linux_secrets_backup/` (directory 0700,
 files 0600). Your working copy still has them (ignored by git). **Other clones lose
@@ -609,7 +611,7 @@ treat them as leaked:
 
 1. AWS IoT Core → Security → Certificates → **Create certificate**; attach the
    same policy/thing; activate. Install it on the boards (Smart RTU tool, or copy to
-   `/home/root/edb_c/linking/` and send `SIGHUP`). Then deactivate and revoke the old one.
+   `/etc/gateway/certs/` and `systemctl restart gateway`). Then deactivate and revoke the old one.
 2. Change the board's root password (`passwd` on the board) and update your local `.env`.
 3. Optional: GitLab → Settings → General → Visibility → **Private**.
 

@@ -17,6 +17,7 @@
 
 #include "storage.h"
 #include "store_forward.h"
+#include "paths.h"
 #include "mqtt.h"
 #include "connection.h"
 
@@ -31,11 +32,28 @@
 #include <sys/stat.h>
 #include <stdatomic.h>
 
-/** @brief Directory holding payloads stored while offline (one file per payload). */
-#define STORAGE_DIR          "/home/root/edb_c/linking/storage"
+/** @brief Directory (inside the data directory, paths.h) holding payloads stored while offline. */
+#define STORAGE_SUBDIR       "storage"
 
-/** @brief Size of the path buffers for files in STORAGE_DIR. */
-#define MAX_PATH             256
+/** @brief Size of the path buffers for files in the storage directory. */
+#define MAX_PATH             (PATHS_MAX + SF_NAME_MAX)
+
+/**
+ * @brief Path of a stored file, or of the storage directory itself.
+ *
+ * @param name File name, or NULL for the directory.
+ * @param buf  Output buffer (MAX_PATH bytes).
+ * @return buf.
+ */
+static char *storage_path(const char *name, char *buf)
+{
+    char rel[MAX_PATH];
+    if (name)
+        snprintf(rel, sizeof(rel), "%s/%s", STORAGE_SUBDIR, name);
+    else
+        snprintf(rel, sizeof(rel), "%s", STORAGE_SUBDIR);
+    return paths_data(rel, buf, MAX_PATH);
+}
 
 /** @brief Seconds between replay rounds (each sends up to SF_REPLAY_BATCH payloads). */
 #define REPLAY_INTERVAL_SEC  60
@@ -60,22 +78,25 @@ static atomic_int replay_running = 0;
  */
 int offline_init(void)
 {
-    if (mkdir(STORAGE_DIR, 0755) != 0 && errno != EEXIST)
+    char dir[MAX_PATH];
+    storage_path(NULL, dir);
+
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST)
     {
         fprintf(stderr,
                 "[SD_CARD] mkdir %s: %s\n",
-                STORAGE_DIR,
+                dir,
                 strerror(errno));
         return 0;
     }
 
-    printf("[SD_CARD] Storage dir ready: %s\n", STORAGE_DIR);
+    printf("[SD_CARD] Storage dir ready: %s\n", dir);
 
     return 1;
 }
 
 /* -------------------------------------------------------------------------- */
-/* sf_ops_t on STORAGE_DIR and MQTT                                           */
+/* sf_ops_t on the storage directory and MQTT                                           */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -90,16 +111,17 @@ static int fs_connected(void *ctx)
 }
 
 /**
- * @brief sf_ops_t.list: every entry of STORAGE_DIR.
+ * @brief sf_ops_t.list: every entry of the storage directory.
  * @param ctx Unused.
  * @param each Called with each entry name.
  * @param each_ctx Passed to each.
- * @return 0, or -1 if STORAGE_DIR can't be opened.
+ * @return 0, or -1 if the storage directory can't be opened.
  */
 static int fs_list(void *ctx, void (*each)(const char *name, void *each_ctx), void *each_ctx)
 {
     (void)ctx;
-    DIR *dir = opendir(STORAGE_DIR);
+    char dir_path[MAX_PATH];
+    DIR *dir = opendir(storage_path(NULL, dir_path));
 
     if (!dir)
     {
@@ -117,16 +139,16 @@ static int fs_list(void *ctx, void (*each)(const char *name, void *each_ctx), vo
 }
 
 /**
- * @brief sf_ops_t.read: whole file from STORAGE_DIR.
+ * @brief sf_ops_t.read: whole file from the storage directory.
  * @param ctx Unused.
- * @param name File name in STORAGE_DIR.
+ * @param name File name in the storage directory.
  * @return malloc()ed NUL-terminated content, NULL on failure.
  */
 static char *fs_read(void *ctx, const char *name)
 {
     (void)ctx;
     char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+    storage_path(name, path);
 
     FILE *f = fopen(path, "r");
 
@@ -164,9 +186,9 @@ static char *fs_read(void *ctx, const char *name)
 }
 
 /**
- * @brief sf_ops_t.write: new file in STORAGE_DIR.
+ * @brief sf_ops_t.write: new file in the storage directory.
  * @param ctx Unused.
- * @param name File name in STORAGE_DIR.
+ * @param name File name in the storage directory.
  * @param payload Content.
  * @return 0 on success, -1 on failure.
  */
@@ -174,7 +196,7 @@ static int fs_write(void *ctx, const char *name, const char *payload)
 {
     (void)ctx;
     char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+    storage_path(name, path);
 
     /* "x": fail instead of overwriting an existing file. */
     FILE *f = fopen(path, "wx");
@@ -211,16 +233,16 @@ static int fs_publish(void *ctx, const char *payload)
 }
 
 /**
- * @brief sf_ops_t.remove: delete a file from STORAGE_DIR.
+ * @brief sf_ops_t.remove: delete a file from the storage directory.
  * @param ctx Unused.
- * @param name File name in STORAGE_DIR.
+ * @param name File name in the storage directory.
  * @return 0 on success, -1 on failure.
  */
 static int fs_remove(void *ctx, const char *name)
 {
     (void)ctx;
     char path[MAX_PATH];
-    snprintf(path, sizeof(path), "%s/%s", STORAGE_DIR, name);
+    storage_path(name, path);
 
     if (remove(path) != 0)
     {
@@ -230,7 +252,7 @@ static int fs_remove(void *ctx, const char *name)
     return 0;
 }
 
-/** @brief The real storage (STORAGE_DIR) and network operations. */
+/** @brief The real storage (the storage directory) and network operations. */
 static const sf_ops_t fs_ops = {
     .ctx       = NULL,
     .connected = fs_connected,

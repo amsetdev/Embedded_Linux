@@ -56,6 +56,24 @@ def test_placeholder_url_is_refused_by_device():
     assert 'strncasecmp(req->url, "https://", 8)' in (REPO / "src/cloud/ota_logic.c").read_text()
 
 
+def make_package(build, version="1.2.3", skip=()):
+    """build/gateway-<version>.tar.gz like `make package` (minus the members in skip)."""
+    pkg = build / "package"
+    (pkg / "bin").mkdir(parents=True, exist_ok=True)
+    (pkg / "lib").mkdir(exist_ok=True)
+    (pkg / "bin" / "gateway").write_bytes((build / "main").read_bytes())
+    (pkg / "lib" / "libmodbus.so.5").write_bytes(b"modbus")
+    (pkg / "lib" / "libmosquitto.so.1").write_bytes(b"mosquitto")
+    (pkg / "install.sh").write_text("#!/bin/sh\n")
+    (pkg / "gateway.service").write_text("[Service]\n")
+    (pkg / "VERSION").write_text(version + "\n")
+    with tarfile.open(build / f"gateway-{version}.tar.gz", "w:gz") as tar:
+        for f in sorted(pkg.rglob("*")):
+            rel = f.relative_to(pkg).as_posix()
+            if f.is_file() and rel not in skip and not any(rel.startswith(x + "/") for x in skip):
+                tar.add(f, arcname=f"./{rel}")
+
+
 @pytest.fixture
 def build(tmp_path):
     """A fake build-firmware artifact directory for version 1.2.3."""
@@ -64,6 +82,7 @@ def build(tmp_path):
     (b / "main").write_bytes(b"\x7fELF fake arm binary")
     (b / "lib" / "libmodbus.so.5").write_bytes(b"modbus")
     (b / "lib" / "libmosquitto.so.1").write_bytes(b"mosquitto")
+    make_package(b)
     info = {"app_version": "1.2.3", "git_sha": "abc123", "pipeline_id": "42",
             "compiler": "arm-linux-gnueabihf-gcc 11.4.0", "binary_file_type": ELF,
             "binary_sha256": hashlib.sha256(b"\x7fELF fake arm binary").hexdigest()}
@@ -76,12 +95,11 @@ def test_package_contents(build, tmp_path, monkeypatch):
     out = tmp_path / "release"
     files = mr.package(build, out, "1.2.3")
     assert sorted(f.name for f in files) == sorted([
-        "stm32mp1-gateway_1.2.3", "stm32mp1-gateway_1.2.3_libs.tar.gz", "build_info.json",
+        "stm32mp1-gateway_1.2.3", "gateway-1.2.3.tar.gz", "build_info.json",
         "SHA256SUMS", "ota_command.json", "release_notes.md"])
     assert (out / "stm32mp1-gateway_1.2.3").read_bytes() == (build / "main").read_bytes()
     assert (out / "stm32mp1-gateway_1.2.3").stat().st_mode & 0o111
-    with tarfile.open(out / "stm32mp1-gateway_1.2.3_libs.tar.gz") as tar:
-        assert sorted(tar.getnames()) == ["lib/libmodbus.so.5", "lib/libmosquitto.so.1"]
+    assert (out / "gateway-1.2.3.tar.gz").read_bytes() == (build / "gateway-1.2.3.tar.gz").read_bytes()
 
 
 def test_sha256sums_verify(build, tmp_path):
@@ -119,11 +137,14 @@ def test_release_notes(build, tmp_path):
     sha = hashlib.sha256((out / "stm32mp1-gateway_1.2.3").read_bytes()).hexdigest()
     assert "## STM32MP1 gateway 1.2.3" in notes and sha in notes and "abc123" in notes
     assert "devices/<device_id>/ota/app" in notes and "libmodbus.so.5" in notes
+    assert "sh /tmp/gw/install.sh" in notes and "--rollback" in notes
 
 
 @pytest.mark.parametrize("change, message", [
     (lambda b: (b / "main").unlink(), "missing build artifact"),
-    (lambda b: [p.unlink() for p in (b / "lib").iterdir()], "runtime libraries"),
+    (lambda b: (b / "gateway-1.2.3.tar.gz").unlink(), "missing build artifact"),
+    (lambda b: make_package(b, skip=("install.sh",)), "missing: install.sh"),
+    (lambda b: make_package(b, skip=("lib",)), "missing: lib/*"),
     (lambda b: _info(b, app_version="1.2.2"), "app_version '1.2.2'"),
     (lambda b: _info(b, binary_file_type="ELF 64-bit LSB pie executable, x86-64"), "not a 32-bit ARM"),
     (lambda b: (b / "main").write_bytes(b"other"), "does not match binary_sha256"),

@@ -37,6 +37,22 @@ class FakeBoardFS:
         self.commands = []
         self.connections = []        # kwargs of every connect()
         self.refuse = None           # exception to raise on connect()
+        self.journal = b""           # what `journalctl -u gateway` prints
+        self.service_fails = False   # `systemctl restart` exits 1
+
+    def run_with_code(self, cmd):
+        """Execute one shell command; return (stdout, stderr, exit code)."""
+        argv = shlex.split(cmd)
+        if argv[0] == "systemctl":
+            self.commands.append(cmd)
+            if self.service_fails:
+                return "", "Job for gateway.service failed.", 1
+            return "", "", 0
+        if argv[0] == "journalctl":
+            self.commands.append(cmd)
+            return self.journal.decode(), "", 0
+        out, err = self.run(cmd)
+        return out, err, 1 if err else 0
 
     def run(self, cmd):
         """Execute one shell command; return (stdout, stderr)."""
@@ -60,9 +76,9 @@ class FakeBoardFS:
 
 
 class _Stream:
-    def __init__(self, text):
+    def __init__(self, text, code=0):
         self._data = text.encode()
-        self.channel = SimpleNamespace(recv_exit_status=lambda: 0)
+        self.channel = SimpleNamespace(recv_exit_status=lambda: code)
 
     def read(self):
         return self._data
@@ -108,8 +124,8 @@ class FakeSSHClient:
         return SimpleNamespace(open=lambda path, mode="r": _RemoteFile(fs, path, mode), close=lambda: None)
 
     def exec_command(self, cmd):
-        out, err = self.fs.run(cmd)
-        return None, _Stream(out), _Stream(err)
+        out, err, code = self.fs.run_with_code(cmd)
+        return None, _Stream(out, code), _Stream(err, code)
 
     def close(self):
         pass

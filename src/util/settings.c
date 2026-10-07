@@ -9,11 +9,13 @@
 
 #include "settings.h"
 #include "json.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <unistd.h>
 
 AppSettings cfg;
 
@@ -84,9 +86,15 @@ void settings_defaults(void)
              OTA_SYSTEM_TOPIC_DEF, cfg.device_id);
     snprintf(cfg.ota_status_topic, sizeof(cfg.ota_status_topic),
              OTA_STATUS_TOPIC_DEF, cfg.device_id);
-    strcpy(cfg.ota_download_dir, OTA_DOWNLOAD_DIR_DEF);
+    paths_data("ota", cfg.ota_download_dir, sizeof(cfg.ota_download_dir));
     strcpy(cfg.app_version, APP_VERSION_DEF);
-    strcpy(cfg.app_binary_path, APP_BINARY_PATH_DEF);
+
+    /* OTA replaces the binary that is actually running. */
+    ssize_t n = readlink("/proc/self/exe", cfg.app_binary_path, sizeof(cfg.app_binary_path) - 1);
+    if (n > 0)
+        cfg.app_binary_path[n] = '\0';
+    else
+        strcpy(cfg.app_binary_path, APP_BINARY_PATH_DEF);
 }
 
 /*------------------------------------------------------------*/
@@ -109,12 +117,12 @@ int settings_load(void)
 {
     settings_defaults();
 
-    char *json = read_file(SETTINGS_FILE);
+    char *json = read_file(paths_config());
 
     if (json == NULL)
     {
         printf("[SETTINGS] %s not found. Using defaults.\n",
-               SETTINGS_FILE);
+               paths_config());
         return -1;
     }
 
