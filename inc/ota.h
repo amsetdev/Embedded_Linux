@@ -18,37 +18,9 @@ extern "C" {
 
 #include <mosquitto.h>
 
-/* -------------------------------------------------------------------------- */
-/* Types                                                                      */
-/* -------------------------------------------------------------------------- */
-
-/** @brief OTA update type. */
-typedef enum
-{
-    OTA_TYPE_APP    = 0,    /**< Application binary update. */
-    OTA_TYPE_SYSTEM = 1     /**< Full system image update.  */
-} ota_type_t;
-
-/** @brief OTA process status. */
-typedef enum
-{
-    OTA_STATUS_STARTED     = 0,
-    OTA_STATUS_DOWNLOADING = 1,
-    OTA_STATUS_VERIFYING   = 2,
-    OTA_STATUS_APPLYING    = 3,
-    OTA_STATUS_SUCCEEDED   = 4,
-    OTA_STATUS_FAILED      = 5
-} ota_status_t;
-
-/** @brief OTA request descriptor. */
-typedef struct
-{
-    ota_type_t type;            /**< Update type.                    */
-    char       url[512];        /**< Pre-signed download URL.        */
-    char       sha256[65];      /**< Expected SHA256 hex (app only). */
-    char       version[32];     /**< Target version string.          */
-    int        pending;         /**< 1 = request waiting to process. */
-} ota_request_t;
+/* Types (ota_type_t, ota_status_t, ota_request_t) and the host-testable
+ * decisions live in ota_logic.h. */
+#include "ota_logic.h"
 
 /* -------------------------------------------------------------------------- */
 /* API                                                                        */

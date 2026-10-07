@@ -26,10 +26,10 @@
  */
 typedef struct
 {
-    modbus_t *mb_ctx;
-    char      ip[64];
-    int       port;
-    int       slave_id;
+    modbus_t *mb_ctx;     /**< libmodbus TCP context. */
+    char      ip[64];     /**< Server IPv4 address. */
+    int       port;       /**< Server TCP port (usually 502). */
+    int       slave_id;   /**< Unit identifier used for requests. */
 } tcp_ctx_t;
 
 /* -------------------------------------------------------------------------- */
@@ -413,6 +413,7 @@ static void tcp_close(void *vctx)
 /* Driver vtable                                                              */
 /* -------------------------------------------------------------------------- */
 
+/** @brief Modbus TCP implementation of the fieldbus driver interface. */
 static const fieldbus_driver_t modbus_tcp_driver = {
     .name           = "modbus_tcp",
     .init           = tcp_init,

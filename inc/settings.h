@@ -19,9 +19,7 @@ extern "C" {
 /* Configuration File                                                         */
 /* -------------------------------------------------------------------------- */
 
-/**
- * @brief Smart RTU configuration file.
- */
+/** @brief Legacy name of the default configuration file; the file in use is paths_config(). */
 #define SETTINGS_FILE "smart_rtu_config.json"
 
 /* -------------------------------------------------------------------------- */
@@ -100,13 +98,13 @@ extern "C" {
 /** @brief Default OTA status report topic pattern. */
 #define OTA_STATUS_TOPIC_DEF   "devices/%s/ota/status"
 
-/** @brief Default OTA download directory. */
+/** @brief Unused: the default OTA download directory is \<data dir\>/ota (paths_data()). */
 #define OTA_DOWNLOAD_DIR_DEF   "/tmp/ota"
 
 /** @brief Default application version string. */
 #define APP_VERSION_DEF        "1.0.0"
 
-/** @brief Default application binary path on board. */
+/** @brief Fallback for the binary OTA replaces when /proc/self/exe can't be read. */
 #define APP_BINARY_PATH_DEF    "/home/root/edb_c/linking/main"
 
 /* -------------------------------------------------------------------------- */
@@ -313,6 +311,20 @@ int settings_load(void);
  * - -1 if the configuration file cannot be loaded.
  */
 int settings_reload(void);
+
+/**
+ * @brief Asks the main loop to reload the configuration (like SIGHUP).
+ *
+ * Thread-safe; used when a configuration was pushed over MQTT.
+ */
+void settings_request_reload(void);
+
+/**
+ * @brief Returns and clears a pending settings_request_reload().
+ *
+ * @return 1 if a reload was requested since the last call, 0 otherwise.
+ */
+int settings_take_reload_request(void);
 
 /* -------------------------------------------------------------------------- */
 /* Convenience Getters                                                        */

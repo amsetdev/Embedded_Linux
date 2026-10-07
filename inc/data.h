@@ -187,6 +187,15 @@ int read_point(ModbusPoint *pt);
 void read_all_points(void);
 
 /**
+ * @brief Asks the polling thread to re-read the register list.
+ *
+ * Thread-safe. The next read_all_points() call runs parse_registers() before
+ * reading, so the register table is never replaced during a cycle. Used after a
+ * configuration reload (SIGHUP or a config pushed over MQTT).
+ */
+void data_request_reload(void);
+
+/**
  * @brief Write a single register or coil via the fieldbus driver.
  *
  * Supports holding registers (FC06) and coils (FC05).

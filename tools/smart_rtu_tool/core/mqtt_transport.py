@@ -9,14 +9,15 @@ that same broker/connection as the config-push channel: no inbound
 connectivity to the board is required at all.
 
 Topic layout (per device, keyed by device_id so the board's IP is
-irrelevant):
+irrelevant; firmware: inc/config_push.h):
 
-    amset/<device_id>/config/set   <- tool publishes registers.csv content
-    amset/<device_id>/config/ack   <- board publishes back after applying
+    amset/<device_id>/config/set   <- tool publishes smart_rtu_config.json (retained, QoS 1)
+    amset/<device_id>/config/ack   <- board answers {"status": "saved"|"unchanged"|
+                                      "rejected"|"error", "registers": N, "error": ...}
 
-Firmware side (new work required — see FIRMWARE_NOTES.md in this repo):
-subscribe to config/set, atomically replace registers.csv, reload points
-in the running process, then publish a short JSON ack.
+The board saves the file atomically when it changed and reloads settings and
+registers. Brokers with client-certificate auth (AWS IoT) need ca_certs,
+certfile and keyfile; username/password brokers need username/password.
 
 Requires: paho-mqtt
 """
@@ -40,12 +41,16 @@ MQTTResult = TransportResult
 
 class MQTTTransport(Transport):
     def __init__(self, broker: str, port: int, username: str, password: str,
-                 use_tls: bool = True):
+                 use_tls: bool = True, ca_certs: str = "", certfile: str = "",
+                 keyfile: str = ""):
         self.broker = broker
         self.port = port
         self.username = username
         self.password = password
         self.use_tls = use_tls
+        self.ca_certs = ca_certs
+        self.certfile = certfile
+        self.keyfile = keyfile
 
     def _make_client(self, client_id_suffix: str):
         """Returns (client, connected_event).  The event is set by an
@@ -55,9 +60,13 @@ class MQTTTransport(Transport):
         conn_error = {}
 
         client = mqtt.Client(client_id=f"smart_rtu_tool_{client_id_suffix}")
-        client.username_pw_set(self.username, self.password)
+        if self.username:
+            client.username_pw_set(self.username, self.password)
         if self.use_tls:
-            client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+            client.tls_set(ca_certs=self.ca_certs or None,
+                           certfile=self.certfile or None,
+                           keyfile=self.keyfile or None,
+                           cert_reqs=ssl.CERT_REQUIRED)
 
         def on_connect(cli, userdata, flags, rc):
             if rc == 0:
@@ -112,30 +121,15 @@ class MQTTTransport(Transport):
     def push_combined_config(self, device_id: str, csv_content: str, json_content: str,
                               wait_ack_seconds: int = 15, **kwargs) -> TransportResult:
         """
-        Publishes the ONE combined config (Wi-Fi + Device + Modbus Map
-        Sizing + Registers) to the device over MQTT. Both the CSV and
-        JSON versions are sent — the CSV on .../config/set (what the
-        current firmware watches, see FIRMWARE_NOTES.md) and the JSON
-        on .../config/set.json (for firmware that prefers to parse
-        JSON instead). Only the CSV publish is waited on for an ack.
+        Publishes the ONE combined config to the device over MQTT: the JSON
+        (smart_rtu_config.json, what the firmware reads) retained on
+        amset/<device_id>/config/set, then waits for the board's ack on
+        amset/<device_id>/config/ack. The CSV copy is not sent over MQTT.
         """
         set_topic = f"amset/{device_id}/config/set"
         ack_topic = f"amset/{device_id}/config/ack"
-        json_topic = f"amset/{device_id}/config/set.json"
-
-        result = self.push_text(csv_content, set_topic, ack_topic=ack_topic,
-                                wait_ack_seconds=wait_ack_seconds)
-        try:
-            client, evt = self._make_client("push_json")
-            err = self._connect_and_wait(client, evt, timeout=10)
-            if not err:
-                info = client.publish(json_topic, json_content, qos=1, retain=True)
-                info.wait_for_publish(timeout=10)
-                client.loop_stop()
-                client.disconnect()
-        except Exception:
-            pass  # JSON copy is best-effort; the CSV push result above is authoritative
-        return result
+        return self.push_text(json_content, set_topic, ack_topic=ack_topic,
+                              wait_ack_seconds=wait_ack_seconds)
 
     def push_text(self, content: str, set_topic: str, ack_topic: str = "",
                   wait_ack_seconds: int = 15, **kwargs) -> TransportResult:
@@ -179,12 +173,19 @@ class MQTTTransport(Transport):
             client.loop_stop()
             client.disconnect()
 
-            if result["ack"] is not None:
-                return TransportResult(
-                    True,
-                    f"Applied — {result['ack'].get('points_loaded', 'ack received')}",
-                    ack_payload=result["ack"],
-                )
+            ack = result["ack"]
+            if ack is not None:
+                status = ack.get("status") if isinstance(ack, dict) else None
+                if status in ("saved", "unchanged"):
+                    what = "saved, reloading" if status == "saved" else "already up to date"
+                    return TransportResult(True, f"Applied on the device ({what}): "
+                                                 f"{ack.get('registers', '?')} registers",
+                                           ack_payload=ack)
+                if status in ("rejected", "error"):
+                    return TransportResult(False, f"Device {status} the config: "
+                                                  f"{ack.get('error', 'no reason given')}",
+                                           ack_payload=ack)
+                return TransportResult(True, "Acknowledged by the device", ack_payload=ack)
             return TransportResult(
                 False,
                 "Published, but no acknowledgment received within "

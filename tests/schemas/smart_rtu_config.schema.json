@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "smart_rtu_config.schema.json",
+  "title": "smart_rtu_config.json (STM32MP1 gateway)",
+  "description": "The one config file the Smart RTU tool writes to /home/root/edb_c/linking/ and the firmware reads in settings_load() (src/util/settings.c) and parse_registers() (src/fieldbus/data.c). Lengths are the firmware buffer sizes minus the NUL terminator. Rules a schema can't express are in tests/validate/config_checks.py.",
+  "type": "object",
+  "required": ["device", "wifi", "modbus_tcp", "mqtt", "registers"],
+  "properties": {
+    "device": {
+      "type": "object",
+      "required": ["device_id", "slave_id", "baud", "parity", "stop_bits", "interval_sec"],
+      "additionalProperties": false,
+      "properties": {
+        "device_id": {"$ref": "#/$defs/name", "maxLength": 63},
+        "slave_id": {"$ref": "#/$defs/slave_id"},
+        "baud": {"enum": [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]},
+        "parity": {"enum": ["None", "Even", "Odd"]},
+        "stop_bits": {"enum": [1, 2]},
+        "interval_sec": {"type": "integer", "minimum": 1, "maximum": 3600}
+      }
+    },
+    "wifi": {
+      "type": "object",
+      "required": ["ssid", "password"],
+      "additionalProperties": false,
+      "properties": {
+        "ssid": {"$ref": "#/$defs/text", "maxLength": 32},
+        "password": {"$ref": "#/$defs/text", "maxLength": 63},
+        "country": {"type": "string", "pattern": "^[A-Z]{2}$"},
+        "enable": {"$ref": "#/$defs/flag"}
+      }
+    },
+    "modbus_tcp": {
+      "type": "object",
+      "required": ["enable", "ip", "port", "slave_id"],
+      "additionalProperties": false,
+      "properties": {
+        "enable": {"$ref": "#/$defs/flag"},
+        "ip": {"type": "string", "maxLength": 63},
+        "port": {"$ref": "#/$defs/port"},
+        "slave_id": {"type": "integer", "minimum": 0, "maximum": 255}
+      }
+    },
+    "mqtt": {
+      "type": "object",
+      "required": ["broker", "port", "client_id", "ca_cert", "device_cert", "private_key", "topic"],
+      "additionalProperties": false,
+      "properties": {
+        "broker": {"$ref": "#/$defs/text", "maxLength": 255},
+        "port": {"$ref": "#/$defs/port"},
+        "client_id": {"$ref": "#/$defs/text", "maxLength": 127},
+        "ca_cert": {"$ref": "#/$defs/path"},
+        "device_cert": {"$ref": "#/$defs/path"},
+        "private_key": {"$ref": "#/$defs/path"},
+        "topic": {"$ref": "#/$defs/text", "maxLength": 127}
+      }
+    },
+    "ota": {
+      "type": "object",
+      "required": ["enable", "app_topic", "system_topic", "status_topic", "download_dir", "app_version", "app_binary_path"],
+      "additionalProperties": false,
+      "properties": {
+        "enable": {"$ref": "#/$defs/flag"},
+        "app_topic": {"$ref": "#/$defs/text", "maxLength": 127},
+        "system_topic": {"$ref": "#/$defs/text", "maxLength": 127},
+        "status_topic": {"$ref": "#/$defs/text", "maxLength": 127},
+        "download_dir": {"$ref": "#/$defs/path"},
+        "app_version": {"$ref": "#/$defs/text", "maxLength": 31},
+        "app_binary_path": {"$ref": "#/$defs/path"}
+      }
+    },
+    "watchdog": {
+      "type": "object",
+      "required": ["enable", "timeout"],
+      "additionalProperties": false,
+      "properties": {
+        "enable": {"$ref": "#/$defs/flag"},
+        "timeout": {"type": "integer", "minimum": 1, "maximum": 3600}
+      }
+    },
+    "registers": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {"$ref": "#/$defs/register"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "text": {
+      "description": "Free text. The firmware's parser stops at the first double quote and does not unescape, so neither \" nor \\ may appear.",
+      "type": "string",
+      "pattern": "^[^\"\\\\]*$"
+    },
+    "name": {"$ref": "#/$defs/text", "minLength": 1},
+    "path": {"$ref": "#/$defs/text", "pattern": "^/", "maxLength": 255},
+    "flag": {"description": "0 or 1. The firmware reads it with atoi(): true/false would be 0.", "enum": [0, 1]},
+    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "slave_id": {"type": "integer", "minimum": 1, "maximum": 247},
+    "register": {
+      "type": "object",
+      "required": ["label", "address", "type", "data_type"],
+      "additionalProperties": false,
+      "properties": {
+        "label": {"$ref": "#/$defs/name"},
+        "address": {"type": "integer", "minimum": 0, "maximum": 65535},
+        "type": {"enum": ["holding", "input", "coil", "discrete"]},
+        "data_type": {"enum": ["uint16", "int32", "float32"]},
+        "slave_id": {"$ref": "#/$defs/slave_id"}
+      }
+    }
+  }
+}

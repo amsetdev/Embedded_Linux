@@ -1,0 +1,62 @@
+# Cross-compile for the STM32MP157F-DK2 (Cortex-A7, arm-linux-gnueabihf) — DOCS/CI_CD_GUIDE.md §5.1
+#
+# No container registry on this GitLab, so the job installs the toolchain into the
+# stock ubuntu:22.04 image with tools/ci/install_toolchain.sh (the same script the
+# Dockerfile uses). Downloaded .debs are cached between pipelines.
+#
+# The device certificate, key and CA are read at runtime from the board
+# (/home/root/edb_c/linking/), so the build needs no secrets.
+
+build-firmware:
+  stage: build
+  image: $BUILD_IMAGE
+  timeout: 20m
+  variables:
+    APT_CACHE_DIR: "$CI_PROJECT_DIR/.cache/apt"
+    LC_ALL: C.UTF-8
+  cache:
+    key:
+      files:
+        - tools/ci/install_toolchain.sh
+      prefix: apt-armhf
+    paths:
+      - .cache/apt/
+  before_script:
+    - bash tools/ci/install_toolchain.sh
+  script:
+    - set -o pipefail; make clean package 2>&1 | tee build.log
+    - mv build.log build/build.log
+    # Must be a 32-bit ARM hard-float ELF for the Cortex-A7
+    - file build/main
+    - file build/main | grep -q 'ELF 32-bit LSB .*ARM, EABI5' && file build/main | grep -q 'ld-linux-armhf'
+    - python3 tools/ci/build_info.py build
+  artifacts:
+    name: "gateway-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+    when: always
+    expire_in: 4 weeks
+    paths:
+      - build/main
+      - build/lib/
+      - build/gateway-*.tar.gz      # installable package (deploy/install.sh)
+      - build/build_info.json
+      - build/build.log
+
+# New compiler warnings fail; the existing ones are in
+# tests/static/compiler-warnings-baseline.json (DOCS/CI_CD_GUIDE.md §5.2).
+compiler-warnings:
+  stage: build
+  image: python:3.11-slim
+  needs:
+    - job: build-firmware
+      artifacts: true
+  variables:
+    GIT_DEPTH: "1"
+  script:
+    - python tests/static/warnings_gate.py build/build.log
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      codequality: reports/gl-code-quality-warnings.json
+    paths:
+      - reports/gl-code-quality-warnings.json

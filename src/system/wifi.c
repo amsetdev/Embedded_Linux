@@ -27,9 +27,13 @@
 /* Interface configuration                                                    */
 /* -------------------------------------------------------------------------- */
 
+/** @brief Wi-Fi network interface of the DK2. */
 #define WIFI_INTERFACE      "wlan0"
+
+/** @brief Wired Ethernet interface of the DK2. */
 #define ETH_INTERFACE       "end0"
 
+/** @brief wpa_supplicant configuration rewritten by wifi_reconfigure(). */
 #define WIFI_CONFIG_FILE \
     "/etc/wpa_supplicant/wpa_supplicant-wlan0.conf"
 
@@ -165,7 +169,7 @@ int wifi_is_connected(void)
     return 0;
 }
 
-/**
+/*
  * @brief Get the IPv4 address of the Wi-Fi interface.
  *
  * @param ip  Output buffer for the IP address string.
@@ -237,7 +241,7 @@ int ethernet_is_connected(void)
     return carrier == 1;
 }
 
-/**
+/*
  * @brief Get the IPv4 address of the Ethernet interface.
  *
  * @param ip  Output buffer for the IP address string.
@@ -446,7 +450,7 @@ int wifi_reconfigure(void)
 }
 
 
-/**
+/*
  * @brief Block until Wi-Fi connects or a timeout expires.
  *
  * Polls the Wi-Fi interface once per second until it is associated

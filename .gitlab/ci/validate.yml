@@ -1,0 +1,41 @@
+# Config / schema / tool-firmware contract — DOCS/CI_CD_GUIDE.md §5.3
+#
+# Checks configs/**/*.json, root smart_rtu_config*.json and
+# tests/fixtures/configs/*.json against tests/schemas/ and the rules in
+# tests/validate/config_checks.py, and runs every config through the REAL
+# firmware parser (src/util/settings.c, json.c, data.c compiled for the host with
+# ASan/UBSan) to prove the firmware reads what the file says. Also builds configs
+# with the desktop tool's own DeviceConfig, and checks register/data type names
+# agree between inc/data.h, src/fieldbus/data.c, the tool and the schema.
+# Runs first and in seconds, so a bad config fails before the build.
+
+validate-configs:
+  stage: validate
+  image: python:3.11-slim
+  needs: []
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    PIP_ROOT_USER_ACTION: ignore
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  cache:
+    key:
+      files:
+        - tests/requirements.txt
+      prefix: pip-validate
+    paths:
+      - .cache/pip/
+  before_script:
+    # gcc for the host build of the firmware parser (tests/validate/firmware_view.py)
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends gcc libc6-dev > /dev/null
+    - pip install -q -r tests/requirements.txt
+  script:
+    - python -m pytest -c tests/pytest.ini tests/validate -m validate
+      --junitxml=reports/validate.xml -o junit_family=xunit2
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: reports/validate.xml
+    paths:
+      - reports/validate.xml

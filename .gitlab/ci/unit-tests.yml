@@ -1,0 +1,45 @@
+# Desktop tool unit tests — DOCS/CI_CD_GUIDE.md §5.4
+#
+# tools/smart_rtu_tool: register model, Excel import, SSH / serial / MQTT
+# transports against fakes (tests/unit/tool/fakes.py), offline queue, keyring,
+# the push/read/erase workers and the PyQt5 window, headless (offscreen).
+# Installs the tool's own requirements.txt so CI tests what users install.
+# No test opens a real serial port, SSH session, MQTT connection or keyring
+# (tests/unit/tool/conftest.py fails the test if one tries).
+#
+# Known issues are pytest xfail(strict=True): "xfailed" today, red once fixed.
+
+unit-tool:
+  stage: unit-test
+  image: python:3.11-slim
+  needs: []           # independent of validate/build: start immediately
+  timeout: 15m
+  variables:
+    QT_QPA_PLATFORM: offscreen
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    PIP_ROOT_USER_ACTION: ignore
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  cache:
+    key:
+      files:
+        - tools/smart_rtu_tool/requirements.txt
+        - tests/requirements.txt
+      prefix: pip-unit-tool
+    paths:
+      - .cache/pip/
+  before_script:
+    # Qt runtime libraries missing from the slim image
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends
+      libgl1 libglib2.0-0 libfontconfig1 libxkbcommon0 libdbus-1-3 > /dev/null
+    - pip install -q -r tools/smart_rtu_tool/requirements.txt -r tests/requirements.txt
+  script:
+    - python -m pytest -c tests/pytest.ini tests/unit -m unit
+      --junitxml=reports/unit-tool.xml -o junit_family=xunit2
+  artifacts:
+    when: always
+    expire_in: 2 weeks
+    reports:
+      junit: reports/unit-tool.xml
+    paths:
+      - reports/unit-tool.xml

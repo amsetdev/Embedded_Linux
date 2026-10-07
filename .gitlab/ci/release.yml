@@ -1,0 +1,54 @@
+# Release — DOCS/CI_CD_GUIDE.md §5.8 (tags v<APP_VERSION_DEF> only)
+#
+# To release:  bump APP_VERSION_DEF in inc/settings.h, merge to main, then
+#              git tag v1.0.1 && git push origin v1.0.1
+# The tag pipeline runs every job; only if all pass does `release` package the
+# build (binary, runtime libraries, SHA256SUMS, ota_command.json, notes), upload
+# it to the Generic Package Registry and create a GitLab Release.
+# Optional CI/CD variable OTA_URL: the https URL to put into ota_command.json.
+
+.release-rules:
+  rules:
+    - if: $CI_COMMIT_TAG
+
+# Fail a mistyped tag in seconds instead of after the whole pipeline.
+release-version-check:
+  stage: validate
+  image: python:3.11-slim
+  needs: []
+  extends: .release-rules
+  variables:
+    GIT_DEPTH: "1"
+  script:
+    - python tools/release/make_release.py --check-only
+
+release:
+  stage: release
+  image: python:3.11-slim
+  extends: .release-rules
+  # `needs` lets a job start early, so list EVERY gate: a release must never be
+  # published while a test job failed or is still running. Add new jobs here.
+  needs:
+    - job: release-version-check
+      artifacts: false
+    - job: validate-configs
+      artifacts: false
+    - job: cppcheck
+      artifacts: false
+    - job: doxygen
+      artifacts: false
+    - job: unit-tool
+      artifacts: false
+    - job: unit-firmware
+      artifacts: false
+    - job: compiler-warnings
+      artifacts: false
+    - job: build-firmware
+      artifacts: true
+  script:
+    - python tools/release/make_release.py build release
+  artifacts:
+    name: "stm32mp1-gateway-$CI_COMMIT_TAG"
+    expire_in: 1 year
+    paths:
+      - release/

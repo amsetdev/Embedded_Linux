@@ -44,8 +44,11 @@ char *read_file(const char *filename);
 /**
  * @brief Retrieves a string value from a JSON document.
  *
- * Searches the complete JSON text for the specified key and copies
- * the associated string value into the supplied buffer.
+ * Searches the JSON text from @p json to its end for the specified key and
+ * copies the associated string value into the supplied buffer. Escapes are
+ * decoded: \\" \\\\ \\/ \\b \\f \\n \\r \\t and \\uXXXX (ASCII; other code points
+ * become '?'). The value is truncated to value_size - 1 bytes. To search one
+ * object only, pass a copy made with json_object_dup().
  *
  * @param json Pointer to the JSON text.
  * @param key JSON key to search for.
@@ -116,6 +119,31 @@ int json_get_string_from(const char *object,
 int json_get_int_from(const char *object,
                       const char *key,
                       int *value);
+
+/**
+ * @brief Finds the end of a JSON object or array.
+ *
+ * Skips strings (including escaped quotes) and nested objects/arrays.
+ *
+ * @param p Pointer to '{' or '['.
+ * @return Pointer to the matching '}' or ']', or NULL if p is not an
+ *         object/array or it is unterminated.
+ */
+const char *json_value_end(const char *p);
+
+/**
+ * @brief Copies the object value of a key: "key": { ... }.
+ *
+ * Uses the first occurrence of "key" that is followed by ':' and an object, so
+ * the same name appearing as a string value is skipped. json_get_string() /
+ * json_get_int() on the copy cannot run into later objects.
+ *
+ * @param json JSON text.
+ * @param key  Key whose object value is wanted.
+ * @return malloc()ed NUL-terminated copy of the object (free() it), or NULL if
+ *         there is no such object.
+ */
+char *json_object_dup(const char *json, const char *key);
 
 #ifdef __cplusplus
 }

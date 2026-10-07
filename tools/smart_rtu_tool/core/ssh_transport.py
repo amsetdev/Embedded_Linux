@@ -17,8 +17,8 @@ import paramiko
 from core import (
     REMOTE_CONFIG_CSV_PATH,
     REMOTE_CONFIG_JSON_PATH,
-    REMOTE_APP_DIR,
-    REMOTE_APP_BIN,
+    REMOTE_CONFIG_DIR,
+    REMOTE_SERVICE,
 )
 from core.transport import Transport, TransportResult
 
@@ -130,7 +130,7 @@ class SSHTransport(Transport):
         if not r2.ok:
             return r2
         return TransportResult(True, f"smart_rtu_config.csv and smart_rtu_config.json "
-                                f"both pushed to {REMOTE_APP_DIR}/")
+                                f"both pushed to {REMOTE_CONFIG_DIR}/")
 
     def read_text(self, remote_path: str, **kwargs) -> TransportResult:
         """Reads a remote file's content back — used by the Read Wi-Fi /
@@ -168,21 +168,18 @@ class SSHTransport(Transport):
             return TransportResult(False, f"Delete failed: {e}")
 
     def restart_app(self) -> TransportResult:
-        """Kills and relaunches ./main so it reloads registers.csv.
-        Prefer reload_config() below if your firmware supports the
-        MQTT/file-watch reload-in-place path instead of a hard restart."""
+        """Restarts the gateway service so it loads the new config (and
+        registers). `systemctl reload` (SIGHUP) would reload settings and
+        registers without a restart; a restart also re-reads certificates."""
         try:
             ssh = self._connect()
-            cmd = (
-                f"pkill -f {REMOTE_APP_BIN} ; sleep 1 ; "
-                f"cd {REMOTE_APP_DIR} && "
-                f"nohup {REMOTE_APP_BIN} > /home/root/edb_c/linking/main.log 2>&1 & "
-                f"disown"
-            )
-            stdin, stdout, stderr = ssh.exec_command(cmd)
-            stdout.channel.recv_exit_status()  # wait for command to be issued
+            stdin, stdout, stderr = ssh.exec_command(f"systemctl restart {REMOTE_SERVICE}")
+            code = stdout.channel.recv_exit_status()
+            err = stderr.read().decode(errors="replace").strip()
             ssh.close()
-            return TransportResult(True, "Restart command issued")
+            if code != 0:
+                return TransportResult(False, f"Restart failed: {err or f'exit code {code}'}")
+            return TransportResult(True, f"{REMOTE_SERVICE} service restarted")
         except Exception as e:
             return TransportResult(False, f"Restart failed: {e}")
 
@@ -190,7 +187,7 @@ class SSHTransport(Transport):
         try:
             ssh = self._connect()
             stdin, stdout, stderr = ssh.exec_command(
-                f"tail -n {lines} {REMOTE_APP_DIR}/main.log"
+                f"journalctl -u {REMOTE_SERVICE} -n {int(lines)} --no-pager -o cat"
             )
             out = stdout.read().decode(errors="replace")
             ssh.close()

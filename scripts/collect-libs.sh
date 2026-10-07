@@ -4,8 +4,9 @@
 #
 # Usage: ./scripts/collect-libs.sh <elf-binary> <output-dir>
 #
-# Skips libc, ld-linux, libpthread, libm, libdl, librt - these are part
-# of the base system and are always present on the board.
+# Skips glibc (libc, ld-linux, libpthread, libm, libdl, librt, libresolv, libutil,
+# libnsl, libanl) and the compiler runtime libgcc_s: they belong to the board's OS and
+# must match its glibc; bundling older copies would break name resolution etc.
 
 set -e
 
@@ -14,8 +15,8 @@ OUTDIR="$2"
 READELF="arm-linux-gnueabihf-readelf"
 SEARCH_DIRS="/usr/lib/arm-linux-gnueabihf /lib/arm-linux-gnueabihf"
 
-# System libs that are always on the board - never deploy these
-SKIP_PATTERN="^(libc\.so|ld-linux|libpthread|libm\.so|libdl\.so|librt\.so)"
+# OS libraries - never bundle these
+SKIP_PATTERN="^(libc\.so|ld-linux|libpthread|libm\.so|libdl\.so|librt\.so|libresolv\.so|libutil\.so|libnsl\.so|libanl\.so|libgcc_s\.so)"
 
 declare -A SEEN  # tracks already-processed sonames
 

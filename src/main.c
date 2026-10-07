@@ -39,6 +39,7 @@
 #include "fieldbus.h"
 #include "display.h"
 #include "settings.h"
+#include "paths.h"
 #include "data.h"
 #include "mqtt.h"
 #include "https.h"
@@ -405,14 +406,54 @@ static void *mqtt_publisher_thread_func(void *arg)
 /* -------------------------------------------------------------------------- */
 
 /**
+ * @brief Prints the command-line usage.
+ *
+ * @param out Stream to print to.
+ */
+static void print_usage(FILE *out)
+{
+    fprintf(out,
+            "Usage: gateway [-c|--config FILE] [-d|--data-dir DIR] [-V|--version] [-h|--help]\n"
+            "  --config FILE   configuration file (default: %s in the working directory)\n"
+            "  --data-dir DIR  offline storage, Modbus TCP database, OTA downloads (default: %s)\n"
+            "Production: --config /etc/gateway/smart_rtu_config.json --data-dir /var/lib/gateway\n",
+            PATHS_DEFAULT_CONFIG, PATHS_DEFAULT_DATA_DIR);
+}
+
+/**
  * @brief Main application entry point.
+ *
+ * @param argc Argument count.
+ * @param argv Arguments (see print_usage()).
  *
  * @return
  * - 0 on normal shutdown.
  * - 1 on initialization failure.
+ * - 2 on invalid command-line arguments.
  */
-int main(void)
+int main(int argc, char **argv)
 {
+    switch (paths_parse_args(argc, argv))
+    {
+    case PATHS_ARGS_VERSION:
+        printf("%s\n", APP_VERSION_DEF);
+        return 0;
+    case PATHS_ARGS_HELP:
+        print_usage(stdout);
+        return 0;
+    case PATHS_ARGS_ERROR:
+        print_usage(stderr);
+        return 2;
+    case PATHS_ARGS_RUN:
+        break;
+    }
+
+    /* Line-buffered output so journald (systemd) gets each log line at once. */
+    setvbuf(stdout, NULL, _IOLBF, 0);
+
+    printf("[MAIN] gateway %s  config=%s  data-dir=%s\n",
+           APP_VERSION_DEF, paths_config(), paths_data_dir());
+
     /* ------------------------------------------------------------------ */
     /* Signal handlers                                                    */
     /* ------------------------------------------------------------------ */
@@ -876,13 +917,16 @@ int main(void)
         /* SIGHUP hot-reload                                             */
         /* -------------------------------------------------------------- */
 
-        if (reload_requested)
+        if (reload_requested || settings_take_reload_request())
         {
             reload_requested = 0;
 
-            printf("[MAIN] SIGHUP received -- reloading configuration\n");
+            printf("[MAIN] Reload requested (SIGHUP or config push) -- reloading configuration\n");
 
             settings_reload();
+
+            /* Registers are re-read by the polling thread at its next cycle. */
+            data_request_reload();
 
             mqtt_cleanup();
             mqtt_init();
