@@ -16,7 +16,7 @@ to a cross-compiled Linux application on a Cortex-A7.
 ```
 stage:  validate           static-analysis   build                      unit-test    hardware-test   release
         ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
-        validate-configs   cppcheck          build-firmware ──►         unit-tool      (step 7)      release (tags)
+        validate-configs   cppcheck          build-firmware ──►         unit-tool      hil-tests     release (tags)
         release-version-   doxygen           compiler-warnings          unit-firmware
           check (tags)
 ```
@@ -25,6 +25,8 @@ stage:  validate           static-analysis   build                      unit-tes
   (`needs: []`) start immediately and run in parallel. `build-firmware` waits for the `validate` and
   `static-analysis` stages, so a bad config, a new cppcheck finding or an
   undocumented function stops the build.
+* `hil-tests` runs on the CI DK2 (runner tag `stm32-hil`): automatically on `main` and
+  tags, as a manual button on branches/MRs (§5.9).
 * `release-version-check` and `release` run only for tags; `release` lists **every** other
   job in `needs:`, so nothing is published unless all pass.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
@@ -55,7 +57,10 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
 | `.gitlab/ci/unit-tests.yml` | `unit-tool` |
 | `.gitlab/ci/host-tests.yml` | `unit-firmware` |
+| `.gitlab/ci/hardware-tests.yml` | `hil-tests` (CI DK2) |
 | `.gitlab/ci/release.yml` | `release-version-check`, `release` (tags only) |
+| `tests/hil/` | hardware-in-the-loop tests, simulated Modbus slaves, AWS observer, `run_local.sh` (§5.9) |
+| `DOCS/HIL_SETUP.md` | runner, SSH key, CI variables, AWS IoT test identities, moving the RS485 adapter |
 | `tools/release/make_release.py` | release packaging and publishing (tests: `tests/unit/release/`, run by `unit-tool`) |
 | `tests/host/` | firmware C tests: `Makefile`, `test_*.c`, `known_issue.h`, `run_tests.py` (Unity → JUnit), `unity/` (Unity 2.6.0, MIT, vendored) |
 | `tests/unit/tool/` | desktop tool tests (headless PyQt5), fakes for board/console/broker in `fakes.py` |
@@ -129,6 +134,7 @@ Run from the repo root.
 | unit-firmware | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev make >/dev/null && make -C tests/host run"` (or on a PC with gcc: `make -C tests/host run`) |
 | cppcheck | `docker run --rm -v "$PWD":/src --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq cppcheck >/dev/null && python tests/static/cppcheck_gate.py"` (or `sudo apt install cppcheck`; CI uses 2.17) |
 | doxygen | `docker run --rm -v "$PWD":/src -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq doxygen >/dev/null && python tests/static/doxygen_gate.py"` → `build-docs/html/index.html` (CI uses 1.9.8) |
+| hil-tests | `tests/hil/run_local.sh build` (needs `make package` + `tools/ci/build_info.py build`, and `~/.config/embedded_linux/hil/`: `HIL_SETUP.md` §1) |
 | release (dry run) | download the `build-firmware` artifacts (job → Download artifacts), unzip, then `python3 tools/release/make_release.py build release --dry-run` |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
 
@@ -480,6 +486,45 @@ Deploy → Releases (and the package version under Deploy → Package Registry),
 | `build/main is not a 32-bit ARM EABI5 executable` | wrong artifact (host build?) |
 | `build/main does not match binary_sha256` | the binary was changed after `build_info.json` was written |
 
+### 5.9 `hil-tests` — hardware-in-the-loop on the CI DK2
+
+**Rig**: the DK2 `192.168.1.26` (OpenSTLinux), reached over SSH from the runner
+`stm32-hil` on this PC; the CH340 USB-RS485 adapter wired to the board's RS485; a Modbus
+TCP slave started by the job on this PC (port 5020); optionally AWS IoT with test-only
+identities. One-time setup, step by step: **[`HIL_SETUP.md`](HIL_SETUP.md)**.
+
+**What one run does** (`tests/hil/conftest.py`): backs up the board's `/etc/gateway` and
+buffered payloads, **installs the pipeline's `gateway-<ver>.tar.gz` with the production
+`install.sh`**, runs the tests with test configurations (Wi-Fi disabled), then restores the
+board's configuration and payloads. The board keeps running the tested build afterwards.
+
+| File | Checks |
+|---|---|
+| `test_01_install.py` | installer output; the installed binary **is** the CI build (SHA256, `--version`, `/opt/gateway/VERSION`); service enabled and running with the production paths; libmodbus/mosquitto/OpenSSL/curl loaded from `/opt/gateway/lib` (RPATH), not the OS; config 0600, certs 0700; `--help`, bad options → exit 2 |
+| `test_02_config_reload.py` | settings read from `/etc/gateway`; OTA topics from the device ID; data/OTA paths; Wi-Fi left alone; **no third-party HTTP POST**; `systemctl reload` (SIGHUP) re-reads settings **and registers** without a restart |
+| `test_03_modbus_rtu.py` | over RS485 against simulated slaves 1 and 2: every register type with the slave's value in the telemetry payload, 32-bit values high word first, int32 above 2^24 exact, discrete inputs from FC02, a missing slave's register left out, payload contract |
+| `test_04_modbus_tcp.py` | Modbus TCP thread: 100 holding registers stored in `/var/lib/gateway/modbus_tcp.db` |
+| `test_05_store_forward.py` | offline payload files `<ms>_<seq>.txt`, in order, valid telemetry |
+| `test_06_aws.py` (AWS) | telemetry on AWS IoT; **config push over MQTT** saved, acked, applied; garbage rejected; OTA without sha256 / with http:// refused with the right error; buffered payloads replayed and deleted after PUBACK |
+| `test_99_no_crash.py` | no automatic restart, no crash / SIGKILL in the journal |
+
+Without the AWS variables the AWS tests are **skipped**; without the RS485 adapter the RTU
+tests are skipped; everything else still runs.
+
+**Artifacts**: `reports/hil.xml` (Tests tab) and **`reports/hil-journal.log`** — the
+gateway's whole journal for the session. Read it first when a HIL test fails.
+
+**Reading a failure**: `timeout (60s) waiting for /…/ in the gateway journal; last lines:`
+shows the board's last log lines. `board command failed (exit N): <cmd>` shows the command's
+output. A board that doesn't answer: is it on, `ping 192.168.1.26`, `HIL_SSH_KEY` still in
+its `authorized_keys`?
+
+**Writing HIL tests**: use the `gateway` fixture (`apply_config(base_config(...))`,
+`wait_stored()`, `clear_storage()`) and `gateway.b` (`run()`, `put()`, `mark()`/`since()`/
+`wait_log()` on the journal). Never print a secret; certificates go to the board with
+`put()` from File variables. Keep Wi-Fi disabled in test configs. Everything you change on
+the board outside `/etc/gateway` and the storage must be undone by the test.
+
 ---
 
 ## 6. Known issues
@@ -493,6 +538,10 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 | The AWS IoT key (`private.key`) and the board password (`.env`) are still in **git history**, and the project is **public** on this GitLab | removed from the tree (§9). Rotate both; consider making the project private |
 | `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`), used when the config has no `wifi` section | change it on that network, and make the defaults empty |
 | A reload (SIGHUP or a config push) runs `mqtt_cleanup()` + `mqtt_init()` in the main thread while the publisher and replay threads may be publishing on the old client | no test (needs the board); found while fixing the config push. Fix: a lock around the client, or reconnect instead of re-creating it |
+| **RS485 receive path on the CI DK2 doesn't work**: the board's requests reach the RS485 adapter cleanly and the simulated slave answers, but the board never receives the replies (3 retries per register). Kernel RS485 flags are normal (`ENABLED, RTS_ON_SEND, RX_DURING_TX`, no delays); the device-tree node of `ttySTM2` (`serial@40018000`) has none of the RS485 properties `README_Devicetree.md` describes. Points to DE/RE control of the transceiver (pinmux of the RTS pin, DE/RE wiring or polarity) | HIL `test_03_modbus_rtu.py` fails until fixed (hardware / device tree) |
+| This PC's firewall blocks the board from reaching the Modbus TCP slave on port 5020 | open the port once (`HIL_SETUP.md` §3 step 6); HIL `test_04_modbus_tcp.py` fails until then |
+| `drive_logger` sends the application's error/warning output to a hard-coded Google Apps Script URL (device ID `SIR68b29`) | decide whether that is wanted in production; it currently gets HTTP 404 |
+| With an unreachable slave every register costs 3 retries × the response timeout: a cycle of 67 failing registers took 213 s, so the poll interval is not kept | no test yet; decide the wanted behaviour (skip a dead slave for a while, shorter timeout) |
 | 8 compiler warnings, 50 cppcheck findings | baselines (§5.2, §5.5) |
 
 There are no open strict xfails / `KNOWN_ISSUE`s: all 24 found while building the
@@ -508,7 +557,7 @@ suite were fixed in the bug-fix pass (§6.1), each with a `Regression:` test.
 | Telemetry | NaN/Inf floats → `nan` (invalid JSON); `(int)NaN` undefined behaviour | `null`; int value clamped | `test_payload.c`, `test_data_read.c` (`-fsanitize=float-cast-overflow`) |
 | Offline storage | `<unix s>000.txt` (same-second overwrite); file deleted without PUBACK; 1 file per 60 s | `<unix ms>_<seq>.txt`, never overwritten (old names still replayed first); deleted only after the broker's **PUBACK** (`mqtt_publish_confirmed()`, 10 s); up to **100 files per round** | `test_store_forward.c` |
 | MQTT config push | the firmware didn't listen; the tool sent the CSV | firmware subscribes to **`amset/<device_id>/config/set`**, saves the JSON atomically if it changed, reloads settings **and registers**, acks on **`amset/<device_id>/config/ack`** `{"status":"saved"/"unchanged"/"rejected"/"error","registers":N}`; the tool sends the JSON there and succeeds only on `saved`/`unchanged`. The device's AWS IoT policy must allow Subscribe/Receive on the set topic and Publish on the ack topic. The tool's MQTT tab now takes a CA / client cert / key for AWS IoT | `test_config_push.c`, `test_mqtt_transport.py`, `test_tool_contract.py::test_firmware_subscribes_to_tool_config_topic` |
-| SIGHUP | reloaded settings and MQTT, not registers | also re-reads the registers (in the polling thread, between cycles) | covered by HIL (step 7) |
+| SIGHUP | reloaded settings and MQTT, not registers | also re-reads the registers (in the polling thread, between cycles) | HIL `test_02_config_reload.py::test_sighup_reloads_settings_and_registers_without_restart` |
 | Tool config file | no `wifi.enable`/`country`; `slave_id` omitted for "device default" | both always written; Device page has **Wi-Fi enabled** and **Country** | `test_register_model.py`, `test_tool_contract.py` |
 | Tool validation | accepted labels > 63 bytes / with `"`, overlapping 32-bit registers | rejected (also duplicate labels, 32-bit on coils, Address+1 > 65535) | `test_register_model.py`, `test_tool_contract.py::test_tool_rejects_what_firmware_mishandles` |
 | Excel import | anything containing "int" → `int32` | IEC names: `INT`/`UINT`/`WORD`/`INT16` → `uint16` (warning for signed), `DINT`/`UDINT`/`DWORD` → `int32` (warning for unsigned), `REAL` → `float32` | `test_excel_import.py` |
@@ -622,6 +671,8 @@ but disruptive; rotation makes the leaked values useless.
 
 ## 10. Roadmap (not implemented yet)
 
-| Step | Stage | Adds |
-|---|---|---|
-| 7 | hardware-test | dedicated DK2 over SSH (runner tag `stm32-hil`): Modbus TCP + RTU slaves, AWS IoT observer, SIGHUP reload, store-and-forward, crash detection |
+| Step | Adds |
+|---|---|
+| 8 | `DOCS/ARCHITECTURE.md` (threads, config flow, SIGHUP, payload contract, offline storage, OTA), `CLAUDE.md` |
+| — | AWS HIL identities (`HIL_SETUP.md` §4) to enable `test_06_aws.py` |
+| — | build with the OpenSTLinux SDK instead of bundled Ubuntu libraries (`DEPLOYMENT.md` §1) |

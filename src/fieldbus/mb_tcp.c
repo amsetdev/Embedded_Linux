@@ -286,21 +286,33 @@ void *mb_thread_func1(void *arg)
     }
 
 
+    extern atomic_int running;
+
     /*
-     * Initial Modbus TCP connection.
+     * Initial Modbus TCP connection: keep trying (every 5 s) so a slave
+     * that is down when the gateway starts is polled once it comes up.
      */
     ctx.mb_ctx =
         mb_connect(ctx.slave_ip,
                    ctx.slave_port,
                    ctx.slave_id);
 
-    if (ctx.mb_ctx == NULL)
+    while (running && ctx.mb_ctx == NULL)
     {
         fprintf(stderr,
-                "[ MODBUS_TCP ] Initial Modbus connect failed.\n");
+                "[ MODBUS_TCP ] Initial Modbus connect failed. "
+                "Retrying in 5 seconds...\n");
 
+        for (int i = 0; i < 5 && running; i++)
+            sleep(1);
+
+        if (running)
+            ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
+    }
+
+    if (ctx.mb_ctx == NULL)
+    {
         cleanup(&ctx);
-
         return NULL;
     }
 
@@ -311,7 +323,6 @@ void *mb_thread_func1(void *arg)
     /*
      * Main polling loop.
      */
-    extern atomic_int running;
 
     while (running)
     {

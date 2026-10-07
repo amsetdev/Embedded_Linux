@@ -14,6 +14,8 @@ WorkingDirectory=/var/lib/gateway
 # Also covers app OTA: the new binary is exec'd in place; if that fails the app exits and is restarted.
 Restart=always
 RestartSec=3
+# A clean stop takes a few seconds (threads finish their current step); never wait 90 s.
+TimeoutStopSec=20
 StandardOutput=journal
 StandardError=journal
 

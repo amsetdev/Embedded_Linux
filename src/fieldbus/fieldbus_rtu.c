@@ -144,7 +144,8 @@ static void *rtu_init(const fieldbus_config_t *config)
     }
 
     /* Enable libmodbus debug output to see raw frames. */
-    modbus_set_debug(ctx->mb_ctx, TRUE);
+    /* Frame dump (every request/response) only on demand: GATEWAY_MODBUS_DEBUG=1. */
+    modbus_set_debug(ctx->mb_ctx, getenv("GATEWAY_MODBUS_DEBUG") != NULL);
 
     printf("[FIELDBUS_RTU] Opened %s @ %d baud, parity=%c, "
            "stop=%d (slave %d)\n",
