@@ -62,6 +62,7 @@ build-docs/
 
 # CI / test outputs
 /build.log
+/release/
 reports/
 .cache/
 build-host/
