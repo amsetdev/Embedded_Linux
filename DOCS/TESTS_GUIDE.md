@@ -16,6 +16,7 @@ Contents
 7. [Regression index: bug → test](#7-regression-index-bug--test)
 8. [Desktop tool unit tests](#8-desktop-tool-unit-tests-testsunittool)
 9. [Firmware host tests (C)](#9-firmware-host-tests-c-testshost)
+10. [Release script tests](#10-release-script-tests-testsunitrelease)
 
 ---
 
@@ -29,6 +30,7 @@ what only hardware can show.
 | Config validation + tool/firmware contract | `tests/validate/` | `validate-configs` | Python, gcc (host) | seconds | 4 files, 77 tests |
 | Compiler warnings | `tests/static/warnings_gate.py` | `compiler-warnings` | a clean build log | seconds | 1 gate |
 | Tool unit tests | `tests/unit/tool/` | `unit-tool` | Python + headless PyQt5 | seconds | 8 files, 163 tests |
+| Release script | `tests/unit/release/` | `unit-tool` | Python | seconds | 1 file, 20 tests |
 | cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (50 accepted findings; 0 doc warnings) |
 | Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | ~30 s | 7 binaries, 83 tests |
 | Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
@@ -178,6 +180,7 @@ int data_write_register(int slave_id, RegType reg_type, uint16_t addr, uint16_t 
 | A key the firmware reads (`settings_load()`, `parse_registers()`) | `fw_config_dump.c` + schema + fixture (§3.2) |
 | Register / data type names | all of: `inc/data.h`, `data.c`, tool tables, schema; `test_type_consistency.py` tells you what's missing |
 | The desktop tool (model, import, transports, workers, window) | `tests/unit/tool/` (§8) |
+| Release packaging (`tools/release/make_release.py`) | `tests/unit/release/` (§10) |
 | A delivery mode (SSH / serial / MQTT) | transport test against the matching fake, plus a worker test for what the button does |
 | Firmware logic without hardware calls (parsing, formatting, decisions, ordering) | a module in `src/` without library includes + `tests/host/` (§9) |
 | Firmware that talks to Modbus, MQTT, the file system or curl | move its decisions into such a module (ops struct for the side effects); the rest is covered by HIL (step 7) |
@@ -277,3 +280,23 @@ The modules and why they exist: [`CI_CD_GUIDE.md` §5.7](CI_CD_GUIDE.md#57-unit-
 
 Everything compiles with `-Werror`; the sanitizers abort on the first error, so an
 out-of-bounds read fails the test even if the result looks right.
+
+---
+
+## 10. Release script tests (`tests/unit/release/`)
+
+`test_make_release.py` covers `tools/release/make_release.py` (run by the `unit-tool` job):
+
+* the version comes from `APP_VERSION_DEF` in `inc/settings.h`; the tag must equal
+  `v<version>` (`v9.9.9`, `1.0.0`, `v1.0.0-rc1`, `release` fail; no tag is allowed for dry runs);
+* packaging from a fake build directory: file names, the binary is executable and identical to
+  `build/main`, the libraries tarball holds `lib/*.so*`, `SHA256SUMS` verifies, release notes
+  carry version, commit, checksum and the OTA topic;
+* `ota_command.json`: `sha256` is the binary's (64 hex, what the firmware requires), the URL
+  comes from `OTA_URL` or is a placeholder **without `https://`**, which the firmware refuses
+  (checked against `ota_logic.c`);
+* wrong builds are refused before anything is written: missing binary or libraries, another
+  `app_version`, a non-ARM binary, a binary that doesn't match `build_info.json`;
+* publishing (HTTP calls recorded, nothing sent): every file uploaded to the Generic Package
+  Registry under `stm32mp1-gateway/<version>`, one Release for the tag with a link per file;
+  `--dry-run` or no tag never publishes.

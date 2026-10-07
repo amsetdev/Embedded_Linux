@@ -16,14 +16,17 @@ to a cross-compiled Linux application on a Cortex-A7.
 ```
 stage:  validate           static-analysis   build                      unit-test    hardware-test   release
         ────────           ───────────────   ─────                      ─────────    ─────────────   ───────
-        validate-configs   cppcheck          build-firmware ──►         unit-tool      (step 7)      (step 6)
-                           doxygen           compiler-warnings          unit-firmware
+        validate-configs   cppcheck          build-firmware ──►         unit-tool      (step 7)      release (tags)
+        release-version-   doxygen           compiler-warnings          unit-firmware
+          check (tags)
 ```
 
 * `validate-configs`, `cppcheck`, `doxygen`, `unit-tool` and `unit-firmware`
   (`needs: []`) start immediately and run in parallel. `build-firmware` waits for the `validate` and
   `static-analysis` stages, so a bad config, a new cppcheck finding or an
   undocumented function stops the build.
+* `release-version-check` and `release` run only for tags; `release` lists **every** other
+  job in `needs:`, so nothing is published unless all pass.
 * `build-firmware` cross-compiles `build/main` for `arm-linux-gnueabihf` and
   collects the runtime libraries into `build/lib/`.
 * `compiler-warnings` reads the build log and fails on any compiler warning that
@@ -52,6 +55,8 @@ Recommended (Settings → Merge requests): **"Pipelines must succeed"** and prot
 | `.gitlab/ci/build.yml` | `build-firmware`, `compiler-warnings` |
 | `.gitlab/ci/unit-tests.yml` | `unit-tool` |
 | `.gitlab/ci/host-tests.yml` | `unit-firmware` |
+| `.gitlab/ci/release.yml` | `release-version-check`, `release` (tags only) |
+| `tools/release/make_release.py` | release packaging and publishing (tests: `tests/unit/release/`, run by `unit-tool`) |
 | `tests/host/` | firmware C tests: `Makefile`, `test_*.c`, `known_issue.h`, `run_tests.py` (Unity → JUnit), `unity/` (Unity 2.6.0, MIT, vendored) |
 | `tests/unit/tool/` | desktop tool tests (headless PyQt5), fakes for board/console/broker in `fakes.py` |
 | `tools/ci/install_toolchain.sh` | **the** package list: armhf cross gcc + armhf libmodbus/mosquitto/sqlite3/ssl/curl/zlib. Used by CI and by the `Dockerfile` |
@@ -123,6 +128,7 @@ Run from the repo root.
 | unit-firmware | `docker run --rm -v "$PWD":/src --tmpfs /src/build-host:exec --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq gcc libc6-dev make >/dev/null && make -C tests/host run"` (or on a PC with gcc: `make -C tests/host run`) |
 | cppcheck | `docker run --rm -v "$PWD":/src --tmpfs /src/reports -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq cppcheck >/dev/null && python tests/static/cppcheck_gate.py"` (or `sudo apt install cppcheck`; CI uses 2.17) |
 | doxygen | `docker run --rm -v "$PWD":/src -w /src python:3.11-slim sh -c "apt-get update -qq && apt-get install -y -qq doxygen >/dev/null && python tests/static/doxygen_gate.py"` → `build-docs/html/index.html` (CI uses 1.9.8) |
+| release (dry run) | download the `build-firmware` artifacts (job → Download artifacts), unzip, then `python3 tools/release/make_release.py build release --dry-run` |
 | compiler-warnings | `docker run --rm -v "$PWD":/project stm32mp1-build sh -c "make clean all > build.log 2>&1"` then `python3 tests/static/warnings_gate.py build.log` |
 
 `--tmpfs /src/build-host:exec` keeps the compiled parser harness out of your tree
@@ -147,7 +153,8 @@ local image and CI stay identical only if you do.
 * **Merge request → Code Quality widget**: new compiler warnings and cppcheck findings.
 * **`doxygen` job → Browse artifacts → `build-docs/html/index.html`**: the API documentation.
 * **Job → Browse / Download artifacts**: `build/main`, `build/lib/`,
-  `build/build_info.json`, `build/build.log`.
+  `build/build_info.json`, `build/build.log`; `release/` of the `release` job.
+* **Deploy → Releases** and **Deploy → Package Registry** (`stm32mp1-gateway`): published releases.
 
 ---
 
@@ -420,6 +427,57 @@ normal assertion (§6).
 
 **Adding a test**: see `TESTS_GUIDE.md` §9.
 
+### 5.8 `release-version-check` and `release` (tags only)
+
+* `release-version-check` (validate stage) fails in seconds unless the tag is exactly
+  `v` + `APP_VERSION_DEF` from `inc/settings.h`. The device puts this version into its OTA
+  status messages (`previous_version`), so tag and binary must agree.
+* `release` waits for every other job, checks the build artifacts belong to this version
+  (`build_info.json`: `app_version`, 32-bit ARM ELF, SHA256 of `build/main`) and packages:
+
+  | File | What |
+  |---|---|
+  | `stm32mp1-gateway_<ver>` | the application binary = what app OTA downloads |
+  | `stm32mp1-gateway_<ver>_libs.tar.gz` | `lib/*.so*` from `build/lib/` for `make deploy-libs` / `/usr/lib` |
+  | `build_info.json`, `SHA256SUMS` | provenance and checksums |
+  | `ota_command.json` | `{"url", "version", "sha256"}` for `devices/<device_id>/ota/app`; `sha256` is the binary's |
+  | `release_notes.md` | version, commit, compiler, size, OTA and manual install steps, library list, checksums |
+
+  It uploads them to the **Generic Package Registry** (package `stm32mp1-gateway`, version
+  `<ver>`) and creates a **GitLab Release** (Deploy → Releases), both with `CI_JOB_TOKEN`.
+  CI variable `OTA_URL` (optional) is written into `ota_command.json`; without it the URL is a
+  placeholder **without `https://`**, which the firmware rejects (`invalid_url`), so an unedited
+  command can never start a download.
+
+**How to release**
+```bash
+# 1. MR that sets  #define APP_VERSION_DEF "1.0.1"  in inc/settings.h  -> merge to main
+git checkout main && git pull
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+**One-time setup (Maintainer)**: Settings → Repository → **Protected tags**: `v*`, allowed to
+create: Maintainers. Settings → General → Visibility → **Package registry** and **Releases**
+enabled (default).
+
+**Fixing a wrong tag** (`Tag 'v1.0.1' does not match APP_VERSION_DEF "1.0.0"`):
+```bash
+git push origin :refs/tags/v1.0.1    # delete on GitLab (or Code → Tags → delete)
+git tag -d v1.0.1                    # delete locally
+# bump APP_VERSION_DEF via MR, merge, then tag again on the merged commit
+```
+If `release` fails after uploading, the Release may already exist (`HTTP 409`): delete it under
+Deploy → Releases (and the package version under Deploy → Package Registry), then retry the job.
+
+**Refusals and what they mean**
+
+| Message | Cause |
+|---|---|
+| `build_info.json says app_version '1.0.0', the source says '1.0.1'` | artifacts from another pipeline; re-run `build-firmware` in the tag pipeline |
+| `build/main is not a 32-bit ARM EABI5 executable` | wrong artifact (host build?) |
+| `build/main does not match binary_sha256` | the binary was changed after `build_info.json` was written |
+
 ---
 
 ## 6. Known issues
@@ -488,7 +546,8 @@ Rebuild your local image.
 **New CI job**
 * `tags: [docker]` comes from `default:`; never use `hardware` (ESP32 rig).
 * Use `needs: []` if it doesn't need build artifacts, so it starts immediately.
-* Once the release job exists (step 6): add the job to `release`'s `needs:`.
+* **Add it to the `needs:` list of `release` in `.gitlab/ci/release.yml`.** Otherwise a
+  release could be published while your job fails.
 * Produce `artifacts: reports: junit:` (tests) or `codequality:` (findings) so
   results show in GitLab.
 
@@ -505,6 +564,9 @@ Rebuild your local image.
 | cppcheck job fails after a refactor | moved code can produce a "new" finding plus a "fixed" one: fix it, then `--update-baseline` |
 | doxygen: `Doxyfile does not match the makefile` | a file was added to / removed from `SRCS`: update `INPUT`/`EXCLUDE` (§5.6) |
 | doxygen: `has multiple @param documentation sections` | the function is documented in the header **and** at the definition: make the definition's comment a plain `/* */` |
+| release: `does not match APP_VERSION_DEF` | see "Fixing a wrong tag" (§5.8) |
+| release: `HTTP 409` | the Release / package version exists already: delete it, retry (§5.8) |
+| release: `HTTP 403/404` on upload | Package registry or Releases disabled for the project (Settings → General → Visibility) |
 | unit-firmware: `ERROR: AddressSanitizer` / `runtime error:` | a real memory or undefined-behaviour bug in the code under test (or in the test) — read the stack trace |
 | unit-firmware: `ERROR: LeakSanitizer: detected memory leaks` | something isn't freed; LeakSanitizer needs ptrace, which the Docker executor allows |
 | unit-firmware: `fatal error: modbus.h: No such file` | the file under test includes a target-only library; move that code out (§5.7 rule) |
@@ -560,5 +622,4 @@ but disruptive; rotation makes the leaked values useless.
 
 | Step | Stage | Adds |
 |---|---|---|
-| 6 | release | tag `v<APP_VERSION_DEF>`, binary + libs + `SHA256SUMS` |
 | 7 | hardware-test | dedicated DK2 over SSH (runner tag `stm32-hil`): Modbus TCP + RTU slaves, AWS IoT observer, SIGHUP reload, store-and-forward, crash detection |
