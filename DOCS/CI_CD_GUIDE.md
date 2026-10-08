@@ -491,7 +491,8 @@ Deploy → Releases (and the package version under Deploy → Package Registry),
 **Rig**: the DK2 `192.168.1.26` (OpenSTLinux), reached over SSH from the runner
 `stm32-hil` on this PC; the CH340 USB-RS485 adapter wired to the board's RS485; a Modbus
 TCP slave started by the job on this PC (port 5020); optionally AWS IoT with test-only
-identities. One-time setup, step by step: **[`HIL_SETUP.md`](HIL_SETUP.md)**.
+identities; a local mosquitto broker (installed by the job) that the board reaches through the
+SSH connection (`tests/hil/local_broker.py`). One-time setup, step by step: **[`HIL_SETUP.md`](HIL_SETUP.md)**.
 
 **What one run does** (`tests/hil/conftest.py`): backs up the board's `/etc/gateway` and
 buffered payloads, **installs the pipeline's `gateway-<ver>.tar.gz` with the production
@@ -505,6 +506,7 @@ board's configuration and payloads. The board keeps running the tested build aft
 | `test_03_modbus_rtu.py` | over RS485 against simulated slaves 1 and 2: every register type with the slave's value in the telemetry payload, 32-bit values high word first, int32 above 2^24 exact, discrete inputs from FC02, a missing slave's register left out, payload contract |
 | `test_04_modbus_tcp.py` | Modbus TCP thread: 100 holding registers stored in `/var/lib/gateway/modbus_tcp.db` |
 | `test_05_store_forward.py` | offline payload files `<ms>_<seq>.txt`, in order, valid telemetry |
+| `test_07_mb_write.py` | **Modbus write commands over MQTT** (local broker, no AWS): FC05/06/16 written over RS485 into the simulated slaves, int32 read back in the telemetry, refused writes (unconfigured, input register, half an int32, unknown slave) put nothing on the bus, a retained command isn't replayed after a reconnect, malformed commands answered ([`MODBUS_WRITE_COMMANDS.md`](MODBUS_WRITE_COMMANDS.md)) |
 | `test_06_aws.py` (AWS) | telemetry on AWS IoT; **config push over MQTT** saved, acked, applied; garbage rejected; OTA without sha256 / with http:// refused with the right error; buffered payloads replayed and deleted after PUBACK |
 | `test_99_no_crash.py` | no automatic restart, no crash / SIGKILL in the journal |
 

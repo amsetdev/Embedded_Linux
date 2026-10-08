@@ -43,25 +43,26 @@ def endpoint():
 
 
 class Observer:
-    """MQTT client in AWS IoT. Always close() it (a leftover keeps reconnecting)."""
+    """MQTT client in AWS IoT (default) or another TLS broker (local_broker.py).
+    Always close() it (a leftover keeps reconnecting)."""
 
-    def __init__(self, topics):
+    def __init__(self, topics, host=None, port=8883, ca=None, cert=None, key=None, client_id=None):
         import paho.mqtt.client as mqtt
 
         self.messages = queue.Queue()
         self.connected = threading.Event()
-        device_id = os.environ["HIL_DEVICE_ID"]
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{device_id}-observer")
-        self.client.tls_set(ca_certs=os.environ["HIL_AWS_CA"], certfile=os.environ["HIL_OBSERVER_CERT"],
-                            keyfile=os.environ["HIL_OBSERVER_KEY"], cert_reqs=ssl.CERT_REQUIRED)
+        client_id = client_id or f"{os.environ['HIL_DEVICE_ID']}-observer"
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+        self.client.tls_set(ca_certs=ca or os.environ["HIL_AWS_CA"], certfile=cert or os.environ["HIL_OBSERVER_CERT"],
+                            keyfile=key or os.environ["HIL_OBSERVER_KEY"], cert_reqs=ssl.CERT_REQUIRED)
         self.client.on_connect = lambda c, u, f, rc, p=None: (
             [c.subscribe(t, qos=1) for t in topics], self.connected.set())
         self.client.on_message = lambda c, u, m: self.messages.put((m.topic, m.payload, time.time()))
-        self.client.connect(endpoint(), 8883, keepalive=30)
+        self.client.connect(host or endpoint(), port, keepalive=30)
         self.client.loop_start()
         if not self.connected.wait(20):
             self.close()
-            raise AssertionError("observer could not connect to AWS IoT (endpoint, CA or observer certificate/policy)")
+            raise AssertionError(f"observer could not connect to {host or 'AWS IoT'} (endpoint, CA or observer certificate/policy)")
         time.sleep(1)   # let the subscriptions settle
 
     def wait_for(self, topic, predicate=lambda payload: True, timeout=60):

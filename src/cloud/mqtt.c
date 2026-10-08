@@ -16,6 +16,7 @@
 #include "connection.h"
 #include "ota.h"
 #include "config_push.h"
+#include "mb_cmd.h"
 #include "json.h"
 #include "paths.h"
 
@@ -204,8 +205,77 @@ static void handle_config_push(struct mosquitto *m, const struct mosquitto_messa
     (void)r;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Modbus write commands (mb_cmd.h)                                           */
+/* -------------------------------------------------------------------------- */
+
+/** @brief mbc_ops_t::lock. @param ctx Unused. */
+static void mbc_lock(void *ctx) { (void)ctx; data_bus_lock(); }
+
+/** @brief mbc_ops_t::unlock. @param ctx Unused. */
+static void mbc_unlock(void *ctx) { (void)ctx; data_bus_unlock(); }
+
 /**
- * @brief Message callback: configuration pushes and (when enabled) OTA commands.
+ * @brief mbc_ops_t::points: the polling thread's register list.
+ * @param ctx   Unused.
+ * @param count Output: number of registers.
+ * @return The registers.
+ */
+static const ModbusPoint *mbc_points(void *ctx, int *count)
+{
+    (void)ctx;
+    *count = data_get_count();
+    return data_get_points();
+}
+
+/**
+ * @brief mbc_ops_t::write: FC05/FC06 for one value, FC15/FC16 otherwise.
+ * @param ctx    Unused.
+ * @param slave  Slave address.
+ * @param table  REG_COIL or REG_HOLDING.
+ * @param addr   First address.
+ * @param count  Number of values.
+ * @param values The values.
+ * @return 1 if the slave confirmed the write.
+ */
+static int mbc_write(void *ctx, int slave, RegType table, uint16_t addr,
+                     int count, const uint16_t *values)
+{
+    (void)ctx;
+    if (count == 1 && (table == REG_COIL || table == REG_HOLDING))
+        return data_write_register(slave, table, addr, values[0]);
+    return data_write_block(slave, table, addr, count, values);
+}
+
+/** @brief Bus access for mb_cmd_handle(): the polling thread's driver and register list. */
+static const mbc_ops_t mbc_ops = { NULL, mbc_lock, mbc_unlock, mbc_points, mbc_write };
+
+/**
+ * @brief Executes a Modbus write command and publishes the response.
+ *
+ * Runs in the mosquitto network thread; waits for at most one register read
+ * of the polling thread (data_bus_lock()).
+ *
+ * @param m   Mosquitto instance.
+ * @param msg The message.
+ */
+static void handle_mb_command(struct mosquitto *m, const struct mosquitto_message *msg)
+{
+    char resp[MB_CMD_RESPONSE_MAX];
+    char resp_topic[160];
+
+    mbc_result_t r = mb_cmd_handle(&mbc_ops, (const char *)msg->payload,
+                                   msg->payloadlen > 0 ? (size_t)msg->payloadlen : 0,
+                                   msg->retain, resp, sizeof(resp));
+
+    printf("[MB_CMD] %s: %s\n", r == MBC_OK ? "written" : "not written", resp);
+
+    snprintf(resp_topic, sizeof(resp_topic), MB_CMD_RESPONSE_TOPIC_FMT, cfg.device_id);
+    mosquitto_publish(m, NULL, resp_topic, (int)strlen(resp), resp, 1, false);
+}
+
+/**
+ * @brief Message callback: configuration pushes, Modbus write commands and (when enabled) OTA commands.
  *
  * @param m   Mosquitto instance.
  * @param ud  User data.
@@ -214,14 +284,18 @@ static void handle_config_push(struct mosquitto *m, const struct mosquitto_messa
 static void on_message(struct mosquitto *m, void *ud, const struct mosquitto_message *msg)
 {
     char config_topic[160];
+    char cmd_topic[160];
 
     if (!msg || !msg->topic)
         return;
 
     snprintf(config_topic, sizeof(config_topic), CONFIG_SET_TOPIC_FMT, cfg.device_id);
+    snprintf(cmd_topic, sizeof(cmd_topic), MB_CMD_TOPIC_FMT, cfg.device_id);
 
     if (strcmp(msg->topic, config_topic) == 0)
         handle_config_push(m, msg);
+    else if (strcmp(msg->topic, cmd_topic) == 0)
+        handle_mb_command(m, msg);
     else if (cfg.ota_enable)
         ota_on_message(m, ud, msg);
 }
@@ -252,6 +326,12 @@ static void on_connect(struct mosquitto *m, void *ud, int rc)
         snprintf(config_topic, sizeof(config_topic), CONFIG_SET_TOPIC_FMT, cfg.device_id);
         mosquitto_subscribe(m, NULL, config_topic, 1);
         printf("[MQTT] Subscribed to %s\n", config_topic);
+
+        /* Modbus write commands (not retained: a retained one is answered, never executed). */
+        char cmd_topic[160];
+        snprintf(cmd_topic, sizeof(cmd_topic), MB_CMD_TOPIC_FMT, cfg.device_id);
+        mosquitto_subscribe(m, NULL, cmd_topic, 1);
+        printf("[MQTT] Subscribed to %s\n", cmd_topic);
 
         /* Subscribe to OTA command topics if enabled. */
         if (cfg.ota_enable)

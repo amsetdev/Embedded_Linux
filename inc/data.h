@@ -196,10 +196,27 @@ void read_all_points(void);
 void data_request_reload(void);
 
 /**
+ * @brief Takes the bus: the polling thread reads no register and does not
+ *        re-parse the register list until data_bus_unlock().
+ *
+ * The polling thread holds it for each register it reads, so another thread
+ * (an MQTT write command) waits for at most one read. Hold it around
+ * data_write_register() / data_write_block() and any use of data_get_points()
+ * from another thread. Not recursive.
+ */
+void data_bus_lock(void);
+
+/**
+ * @brief Releases the bus taken with data_bus_lock().
+ */
+void data_bus_unlock(void);
+
+/**
  * @brief Write a single register or coil via the fieldbus driver.
  *
  * Supports holding registers (FC06) and coils (FC05).
  * Input registers and discrete inputs are read-only and will fail.
+ * Call with the bus locked (data_bus_lock()).
  *
  * @param slave_id Modbus slave address (1-247).
  * @param reg_type Register type (REG_HOLDING or REG_COIL).
@@ -217,6 +234,7 @@ int data_write_register(int slave_id,
  * @brief Write a contiguous block of registers or coils.
  *
  * Supports holding registers (FC16) and coils (FC15).
+ * Call with the bus locked (data_bus_lock()).
  *
  * @param slave_id Modbus slave address (1-247).
  * @param reg_type Register type (REG_HOLDING or REG_COIL).

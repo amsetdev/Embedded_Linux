@@ -267,6 +267,7 @@ The modules and why they exist: [`CI_CD_GUIDE.md` §5.7](CI_CD_GUIDE.md#57-unit-
 | `test_store_forward` | `src/cloud/store_forward.c` | File named `<unix ms>_<seq>.txt`, unique within one second, sorting after files of older firmware; NULL / write failure; only `*.txt` are payloads; offline → nothing; oldest first, then deleted; unreadable file kept; list/remove failures reported; **kept when the broker doesn't confirm**; a round drains the backlog, limited to `SF_REPLAY_BATCH`, and stops at the first unconfirmed publish. |
 | `test_ota_logic` | `src/cloud/ota_logic.c` | App and system commands parsed (sha256 only for app); other topics / empty payload ignored; missing URL; **https only**; URLs up to 4095 characters, longer rejected; `\/` decoded; app commands need a 64-hex sha256; exact status JSON; digest check; the app-update sequence step by step: happy path, no sha256 → nothing downloaded, download failure, SHA mismatch deletes the download, first install without a running binary, backup failure keeps the running binary, replace failure restores the backup. |
 | `test_config_push` | `src/cloud/config_push.c` | A new config is saved and a reload requested; the same config (retained message on reconnect) is not rewritten; empty register list accepted; non-configs (empty, not JSON, no `device`/`registers`, trailing text) rejected without writing; NUL / oversized payloads; payload without NUL terminator; write failure keeps the old file; the exact ack JSON. |
+| `test_mb_cmd` | `src/cloud/mb_cmd.c` | Modbus write commands (`MODBUS_WRITE_COMMANDS.md`): FC05/06/15/16 on configured registers reach the fake bus with the right slave, table, address and words; 32-bit registers only whole (FC16, high word first); unconfigured addresses, read-only tables, wrong table for the fc, another slave, an empty configuration → refused with the reason, **nothing written**; malformed JSON, missing/non-integer params (`"1"`, `1.5`, `1e3`), ranges, fc/method mismatch, count ≠ values, too many values, NUL/oversized/unterminated payloads; a retained command never executed; slave not confirming → error; bus locked during check and write and always released; exact, escaped response JSON. |
 | `test_msg_queue` | `src/util/msg_queue.c` | FIFO order; payload copied; full queue drops the oldest; wrap-around; invalid arguments; items still delivered after shutdown; shutdown and push wake a blocked consumer (threads); destroy frees pending items (LeakSanitizer). |
 | `test_data_read` | `src/fieldbus/data.c` (+ `settings.c`, `json.c`) with a fake fieldbus driver | uint16 reads; each table read from its own Modbus table; float32 and int32 **high word first**; signed int32; int32 above 2^24 exact; NaN/huge floats converted without undefined behaviour; slave switched per point; retries (`MAX_RETRIES`) then success; failure marks the point invalid; no driver → invalid; register and block writes. |
 
@@ -326,7 +327,11 @@ the job and the file-by-file table: [`CI_CD_GUIDE.md` §5.9](CI_CD_GUIDE.md#59-h
 * `board.py`: `run()`, `put()`, `read()`, journal positions `mark()` / `since()` /
   `wait_log(mark, regex)` — use `wait_log` instead of sleeps.
 * `aws_link.py`: `skip_without_network()`, `Observer` (subscribe, `wait_json()`, `publish()`;
-  always closed).
+  always closed; AWS by default, any TLS broker with `host=`/`port=`/certificates).
+* `local_broker.py`: MQTT without AWS and without a firewall opening — mosquitto on this PC
+  (127.0.0.1, client certificates from a per-run CA) and a **reverse port forward on the SSH
+  connection**, so the gateway connects to `localhost:18883` on the board. `install_device_certs()`,
+  `mqtt_section()`, `observer()`. Needs the `mosquitto` package (the job and `run_local.sh` install it).
 
 ### 11.2 Rules
 

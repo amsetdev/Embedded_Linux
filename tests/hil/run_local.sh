@@ -41,6 +41,7 @@ done
 
 docker run --rm --network host -v "$REPO":/src -v "$BUILD":/fwbuild:ro -w /src \
     -e HIL_BUILD_DIR=/fwbuild -e PYTHONDONTWRITEBYTECODE=1 "${args[@]}" "$IMAGE" bash -c "
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends mosquitto > /dev/null
         pip install -q --root-user-action=ignore --disable-pip-version-check \
             -r tests/requirements.txt -r tests/hil/requirements.txt
         python -m pytest -c tests/pytest.ini tests/hil -m hardware -v -rs --tb=short -p no:cacheprovider \
