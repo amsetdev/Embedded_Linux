@@ -244,11 +244,36 @@ def check_config(cfg, text=None):
     return problems
 
 
+def is_project_file(cfg):
+    """A Smart RTU tool project file ("Save Project…": flat keys + "points"), not a device config."""
+    return isinstance(cfg, dict) and "points" in cfg and "registers" not in cfg
+
+
+def project_to_device_config(path):
+    """The device config the tool sends for a project file (DeviceConfig.load_json + to_full_config_json)."""
+    import sys
+    tool = str(REPO / "tools" / "smart_rtu_tool")
+    if tool not in sys.path:
+        sys.path.insert(0, tool)
+    from core.register_model import DeviceConfig
+    return DeviceConfig.load_json(str(path)).to_full_config_json()
+
+
 def check_file(path):
-    """Load and check one file; JSON syntax errors are reported as problems."""
+    """Load and check one file; JSON syntax errors are reported as problems.
+
+    A tool project file is converted with the tool's own code first, so the check
+    covers what the tool would actually send to the device.
+    """
     raw = Path(path).read_bytes()
     try:
         cfg = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         return [f"not valid JSON: {e}"]
+    if is_project_file(cfg):
+        try:
+            text = project_to_device_config(path)
+        except (TypeError, ValueError, KeyError) as e:
+            return [f"tool project file the tool can't load: {e}"]
+        return [f"(as sent by the tool) {p}" for p in check_config(json.loads(text), text)]
     return check_config(cfg, raw)
