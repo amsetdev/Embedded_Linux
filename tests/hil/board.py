@@ -36,13 +36,43 @@ class BoardError(AssertionError):
     pass
 
 
+def load_private_key(value):
+    """The CI SSH key from HIL_SSH_KEY: a file path (GitLab File variable) or the key text
+    itself. Tolerates what copy-pasting into the GitLab UI does to a key: CRLF line endings,
+    surrounding whitespace, a missing final newline. On failure the message describes the
+    content's shape, never the content."""
+    if not value:
+        return None
+    text = value
+    if not value.lstrip().startswith("-----BEGIN"):
+        with open(value, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    has_cr = "\r" in text
+    lines = [l.strip() for l in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = [l for l in lines if l]
+    clean = "\n".join(lines) + "\n"
+    errors = []
+    for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey):
+        try:
+            return cls.from_private_key(io.StringIO(clean))
+        except (paramiko.SSHException, ValueError) as e:
+            errors.append(f"{cls.__name__}: {e}")
+    begin = lines[0] if lines and lines[0].startswith("-----BEGIN") else "(no -----BEGIN line)"
+    end = lines[-1] if lines and lines[-1].startswith("-----END") else "(no -----END line)"
+    raise BoardError(
+        "HIL_SSH_KEY is not a usable private key: "
+        f"{len(lines)} non-empty lines, first {begin!r}, last {end!r}, CR characters: {has_cr}. "
+        "Paste the WHOLE file ~/.config/embedded_linux/hil/id_ed25519 into a variable of type File "
+        f"(DOCS/HIL_SETUP.md §2). [{'; '.join(errors)}]")
+
+
 class Board:
     def __init__(self, host, user="root", key_file=None, password=None, port=22):
         self.host = host
         self.ssh = paramiko.SSHClient()
         self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())   # dedicated CI board on the LAN
-        self.ssh.connect(host, port=port, username=user, key_filename=key_file, password=password,
-                         timeout=15, allow_agent=False, look_for_keys=False)
+        self.ssh.connect(host, port=port, username=user, pkey=load_private_key(key_file),
+                         password=password, timeout=15, allow_agent=False, look_for_keys=False)
         self.expected_restarts = 0
 
     def close(self):
