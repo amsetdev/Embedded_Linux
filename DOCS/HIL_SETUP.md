@@ -52,7 +52,7 @@ Settings → CI/CD → Variables → Add variable:
 | Key | Type | Value | Protect | Note |
 |---|---|---|---|---|
 | `HIL_BOARD_HOST` | Variable | `192.168.1.26` | no | |
-| `HIL_SSH_KEY` | **File** | contents of `~/.config/embedded_linux/hil/id_ed25519` | no | not Protected so the manual HIL button works on MRs. Anyone who can run pipelines can use it (Dropbear can't restrict it to this PC, §1): give push rights only to people you trust with root on the CI board |
+| `HIL_SSH_KEY` | **File** | the key **text** — the whole content of `~/.config/embedded_linux/hil/id_ed25519` (`-----BEGIN …` to `-----END …`), **not** the path | no | not Protected so the manual HIL button works on MRs. Anyone who can run pipelines can use it (Dropbear can't restrict it to this PC, §1): give push rights only to people you trust with root on the CI board |
 | `HIL_SIM_HOST` | Variable | `192.168.1.2` | no | optional (default); this PC as the board sees it |
 
 AWS variables: §4.

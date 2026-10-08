@@ -57,6 +57,11 @@ def load_private_key(value):
             return cls.from_private_key(io.StringIO(clean))
         except (paramiko.SSHException, ValueError) as e:
             errors.append(f"{cls.__name__}: {e}")
+    if len(lines) == 1 and ("/" in lines[0] or lines[0].startswith("~")) and "BEGIN" not in lines[0]:
+        raise BoardError(
+            "HIL_SSH_KEY contains a file path, not the key: a GitLab File variable's VALUE must be "
+            "the key text itself (the whole content of ~/.config/embedded_linux/hil/id_ed25519, from "
+            "-----BEGIN to -----END). DOCS/HIL_SETUP.md §2, or let tests/hil/setup_runner.sh set it.")
     begin = lines[0] if lines and lines[0].startswith("-----BEGIN") else "(no -----BEGIN line)"
     end = lines[-1] if lines and lines[-1].startswith("-----END") else "(no -----END line)"
     raise BoardError(
