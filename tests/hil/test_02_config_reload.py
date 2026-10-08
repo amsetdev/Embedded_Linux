@@ -42,6 +42,14 @@ def test_no_third_party_http_post(gateway, configured):
     assert "httpbin" not in gateway.b.since(configured)
 
 
+def test_connectivity_monitor_running(gateway, configured):
+    """Regression: connection_init() was never called, so internet_up stayed 0 and every
+    payload was stored offline even with a working MQTT connection (the board has
+    internet through end0)."""
+    gateway.b.wait_log(configured, r"Connectivity monitor started", timeout=30)
+    gateway.b.wait_log(configured, r"\[Conn\] Internet UP", timeout=30)
+
+
 def test_sighup_reloads_settings_and_registers_without_restart(gateway, configured):
     pid = gateway.b.main_pid()
     cfg = base_config([r for r, _ in RTU_REGISTERS[:5]])
