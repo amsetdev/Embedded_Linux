@@ -106,4 +106,12 @@ and is applied with a reload (`CI_CD_GUIDE.md` §6.1).
 
 | Date | Board | What happened |
 |---|---|---|
+| 2026-10-08 | CI DK2 `192.168.1.26` | **OS libraries restored**: on 2026-09-12 an older deployment had copied Ubuntu libraries over the board's own in `/usr/lib` — 19 files of 18 OpenSTLinux packages (`libc6`, `libssl3`, `libcrypto3`, `libcurl4`, `libsqlite3-0`, `libz1`, `libgcc1`, `libmosquitto1`, …) no longer matched their package (visible: `sqlite3` refused to run). `apt-get install --reinstall` of the 18 packages (same versions from the feed), all files verified against `/var/lib/dpkg/info/*.md5sums`, reboot, HIL suite 36 passed. Backup of the replaced files: `/home/root/os-libs-before-reinstall-20261008.tar.gz`. 19 extra non-package libraries from that deployment (`libmodbus.so.5`, `libmosquitto.so.1`, `libcjson*`, Kerberos/LDAP, …) are still in `/usr/lib`, unused by the gateway (it loads its own from `/opt/gateway/lib`, §1) |
 | 2026-10-07 | CI DK2 `192.168.1.26` | first `install.sh` run: legacy instance (`nohup ./main` in `/home/root/edb_c/linking`) stopped, config + certificates migrated, 2,930 buffered payloads moved to `/var/lib/gateway/storage`; backup of the legacy directory: `/home/root/legacy-backup-20261007.tar.gz` |
+
+**Other boards deployed the old way** (libraries copied to `/usr/lib`) probably have the same
+damage. Check, then repair with the same versions from the feed:
+```bash
+cd / && for f in /var/lib/dpkg/info/*.md5sums; do md5sum -c --quiet "$f" 2>/dev/null >/dev/null || basename "$f" .md5sums; done
+apt-get update && apt-get install --reinstall <the packages listed>      # then reboot
+```

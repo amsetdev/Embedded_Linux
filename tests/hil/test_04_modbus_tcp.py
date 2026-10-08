@@ -21,8 +21,8 @@ def tcp_polled(gateway, slaves):
 
 
 def test_registers_stored_in_data_dir_database(gateway, tcp_polled, tmp_path):
-    # Read on this PC: the board's sqlite3 CLI doesn't run (its OS libsqlite3 was replaced
-    # by another version, DOCS/CI_CD_GUIDE.md §6).
+    # Read on this PC: doesn't depend on the board having a working sqlite3 CLI (it didn't
+    # while the board's OS libraries were replaced, DEPLOYMENT.md §4).
     local = tmp_path / "modbus_tcp.db"
     sftp = gateway.b.ssh.open_sftp()
     try:
