@@ -1,0 +1,49 @@
+# Hardware-in-the-loop tests on the CI DK2 — DOCS/CI_CD_GUIDE.md §5.9
+#
+# Installs the build-firmware package on the board with the production installer
+# (deploy/install.sh), drives it with test configurations, simulated Modbus RTU
+# slaves on the RS485 adapter and a Modbus TCP slave on this PC, and (with the
+# Protected HIL_AWS_* variables) AWS IoT. The board's own configuration and buffered
+# payloads are backed up and restored around the session (tests/hil/conftest.py).
+#
+# Runner: tag `stm32-hil`, network_mode "host" (the board connects to the TCP slave
+# on this PC), the CH340 RS485 adapter mapped as /dev/ttyUSB0.
+#
+#   main / tags : automatic (the tag pipeline's release needs it)
+#   MR / branch : manual button, allowed to fail (a busy/offline board never blocks an MR)
+
+hil-tests:
+  stage: hardware-test
+  image: python:3.11-slim
+  tags:
+    - stm32-hil
+  needs:
+    - job: build-firmware
+      artifacts: true
+  resource_group: stm32-hil-board     # one pipeline at a time on the board
+  timeout: 30m
+  variables:
+    HIL_BUILD_DIR: build
+    HIL_RTU_PORT: /dev/ttyUSB0
+    PIP_ROOT_USER_ACTION: ignore
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  rules:
+    - if: $CI_COMMIT_TAG || $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - when: manual
+      allow_failure: true
+  script:
+    # Names only, never values
+    - echo "HIL variables present:" $(env | grep -o '^HIL_[A-Z_]*' | sort | tr '\n' ' ')
+    - test -n "$HIL_BOARD_HOST" -a -n "$HIL_SSH_KEY" || { echo "HIL_BOARD_HOST / HIL_SSH_KEY not set (CI guide §5.9)"; exit 1; }
+    - pip install -q -r tests/requirements.txt -r tests/hil/requirements.txt
+    # --tb=short: tracebacks without argument values (no certificate contents in the log)
+    - python -m pytest -c tests/pytest.ini tests/hil -m hardware -v -rs --tb=short
+      --junitxml=reports/hil.xml -o junit_family=xunit2
+  artifacts:
+    when: always
+    expire_in: 4 weeks
+    reports:
+      junit: reports/hil.xml
+    paths:
+      - reports/hil.xml
+      - reports/hil-journal.log

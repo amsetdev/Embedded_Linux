@@ -17,6 +17,7 @@
 #include "wifi.h"
 #include "settings.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -464,7 +465,10 @@ int wifi_wait_for_connection(int timeout_seconds)
 {
     char ip[32];
 
-    for (int elapsed = 0; elapsed < timeout_seconds; elapsed++)
+    extern atomic_int running;
+
+    /* Stop waiting on shutdown: systemd would otherwise SIGKILL the service. */
+    for (int elapsed = 0; elapsed < timeout_seconds && running; elapsed++)
     {
         if (wifi_is_connected() &&
             wifi_get_ip(ip, sizeof(ip)) == 0)

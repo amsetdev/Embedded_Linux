@@ -17,6 +17,7 @@ Contents
 8. [Desktop tool unit tests](#8-desktop-tool-unit-tests-testsunittool)
 9. [Firmware host tests (C)](#9-firmware-host-tests-c-testshost)
 10. [Release script tests](#10-release-script-tests-testsunitrelease)
+11. [Hardware-in-the-loop tests](#11-hardware-in-the-loop-tests-testshil)
 
 ---
 
@@ -33,7 +34,7 @@ what only hardware can show.
 | Release script | `tests/unit/release/` | `unit-tool` | Python | seconds | 1 file, 20 tests |
 | cppcheck, Doxygen | `tests/static/` | `cppcheck`, `doxygen` | cppcheck 2.17 / doxygen 1.9.8 | ~1 min each | 2 gates (50 accepted findings; 0 doc warnings) |
 | Firmware host tests (C) | `tests/host/` | `unit-firmware` | gcc, Unity, ASan/UBSan | ~30 s | 7 binaries, 83 tests |
-| Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 | — | step 7 |
+| Hardware in the loop | `tests/hil/` | `hil-tests` | the CI DK2 (+ RS485 adapter, + AWS for 6 tests) | ~10 min | 7 files, 30 tests |
 
 `pytest` markers (`tests/pytest.ini`, `--strict-markers`) select the layers:
 `validate`, `unit`, `hardware`. Every test file sets `pytestmark`.
@@ -183,7 +184,8 @@ int data_write_register(int slave_id, RegType reg_type, uint16_t addr, uint16_t 
 | Release packaging (`tools/release/make_release.py`) | `tests/unit/release/` (§10) |
 | A delivery mode (SSH / serial / MQTT) | transport test against the matching fake, plus a worker test for what the button does |
 | Firmware logic without hardware calls (parsing, formatting, decisions, ordering) | a module in `src/` without library includes + `tests/host/` (§9) |
-| Firmware that talks to Modbus, MQTT, the file system or curl | move its decisions into such a module (ops struct for the side effects); the rest is covered by HIL (step 7) |
+| Firmware that talks to Modbus, MQTT, the file system or curl | move its decisions into such a module (ops struct for the side effects), and a HIL test for the real thing (§11) |
+| Installation, service, paths (`deploy/`) | HIL `test_01_install.py` |
 | Any C code | it must build without new warnings (`compiler-warnings`) and without new cppcheck findings |
 | Any C function, struct, member, macro or global | its Doxygen comment (§4.1; the `doxygen` job fails otherwise) |
 
@@ -300,3 +302,50 @@ out-of-bounds read fails the test even if the result looks right.
 * publishing (HTTP calls recorded, nothing sent): every file uploaded to the Generic Package
   Registry under `stm32mp1-gateway/<version>`, one Release for the tag with a link per file;
   `--dry-run` or no tag never publishes.
+
+---
+
+## 11. Hardware-in-the-loop tests (`tests/hil/`)
+
+The CI build, installed with the production installer on the CI DK2, against simulated
+Modbus slaves and (optionally) AWS IoT. Rig and one-time setup: [`HIL_SETUP.md`](HIL_SETUP.md);
+the job and the file-by-file table: [`CI_CD_GUIDE.md` §5.9](CI_CD_GUIDE.md#59-hil-tests--hardware-in-the-loop-on-the-ci-dk2).
+
+### 11.1 How a session works
+
+* `board` (session fixture, `conftest.py`): SSH to the board, back up `/etc/gateway` and the
+  buffered payloads, install `gateway-<ver>.tar.gz` with `install.sh --no-migrate`; at the end
+  save the session's journal to `reports/hil-journal.log` and restore the board.
+* `gateway`: `apply_config(cfg)` writes `/etc/gateway/smart_rtu_config.json`, restarts the
+  service and waits until the registers are loaded; `wait_stored()` returns new telemetry
+  payload files (with no broker configured every cycle's payload is stored offline — the same
+  JSON that is published, so the cloud contract is checked without AWS).
+* `slaves` (`sim.py`): Modbus RTU slaves 1 and 2 on the RS485 adapter and a Modbus TCP slave on
+  this PC, in one asyncio loop (pymodbus 3.6). `RTU_REGISTERS` in `conftest.py` lists every test
+  register with the value the slave holds.
+* `board.py`: `run()`, `put()`, `read()`, journal positions `mark()` / `since()` /
+  `wait_log(mark, regex)` — use `wait_log` instead of sleeps.
+* `aws_link.py`: `skip_without_network()`, `Observer` (subscribe, `wait_json()`, `publish()`;
+  always closed).
+
+### 11.2 Rules
+
+* Test configs keep **Wi-Fi disabled** (`base_config()` does): the board's network is never touched.
+* Never print a secret; `--tb=short` keeps argument values out of tracebacks.
+* Undo everything you change on the board outside `/etc/gateway` and the payload storage.
+* The board's BusyBox tools are limited (`find` has no `-delete`, no `ldd`): test commands
+  with them before relying on GNU options.
+* A regression found on the board gets a HIL test **and**, where the logic allows, a host test.
+
+### 11.3 Found on the board while building the suite
+
+| Problem | Fixed | Guarded by |
+|---|---|---|
+| Every payload was also POSTed to `https://httpbin.org/post` (public test service) | removed | `test_02_config_reload.py::test_no_third_party_http_post` |
+| libmodbus frame debug always on (every request in the log) | off; `GATEWAY_MODBUS_DEBUG=1` to enable | — |
+| `systemctl stop/restart` took 90 s and ended in SIGKILL (replay thread slept 60 s at a time; the drive logger's reader thread blocked forever on its pipe) | 1 s sleep steps; reader woken on stop; `TimeoutStopSec=20` | `test_99_no_crash.py::test_no_crash_in_journal` (SIGKILL is a crash) |
+| Modbus TCP database in `/tmp` (lost at reboot) | `/var/lib/gateway/modbus_tcp.db` | `test_04_modbus_tcp.py::test_database_in_data_dir` |
+| Offline storage path hard-coded to the legacy directory | `<data dir>/storage` | `test_05_store_forward.py` |
+| A restart during the 30 s Wi-Fi wait at start-up ended in SIGKILL (the wait ignored the stop request) | the wait stops on shutdown | `test_99_no_crash.py` |
+| Modbus TCP thread gave up for good when the slave was down at start-up; its argument was a pointer to a stack variable that had gone out of scope | retries every 5 s; argument `static` | `test_04_modbus_tcp.py` (needs the firewall opening, `HIL_SETUP.md` §3) |
+| RS485 replies never reached the board: the image's device tree didn't mux PE9 as UART7 RTS (DE) nor enable RS-485 (a 157C board; the README change was for a 157F) | board DTB patched (`DEVICETREE_RS485.md`) | `test_03_modbus_rtu.py` (5 tests) |

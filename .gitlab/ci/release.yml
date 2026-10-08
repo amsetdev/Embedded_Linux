@@ -43,6 +43,8 @@ release:
       artifacts: false
     - job: compiler-warnings
       artifacts: false
+    - job: hil-tests          # tested on the real board
+      artifacts: false
     - job: build-firmware
       artifacts: true
   script:
