@@ -77,3 +77,9 @@ rm /boot/stm32mp157c-dk2-rs485.dtb && sync && reboot
 ```
 If the board doesn't come up at all: put its SD card in a PC, mount the `bootfs` partition
 (`mmcblk1p8` on the board) and do the same two file operations there.
+
+## 6. History
+
+| Date | Board | What |
+|---|---|---|
+| 2026-10-08 | CI DK2 `192.168.1.26` (157C-DK2) | `stm32mp157c-dk2-rs485.dtb` (sha256 `7a14c0a7…a4e510`, built from the board's own `stm32mp157c-dk2.dtb`) installed as label `stm32mp157c-dk2-rs485`, made `DEFAULT`; backup `stm32mp157c-dk2_extlinux.conf.bak`. After the reboot PE7/PE8/PE9/PE10 are `40018000.serial function af7`, kernel RS-485 `ENABLED, RTS_ON_SEND`; HIL `test_03_modbus_rtu.py` 5/5 passed |
