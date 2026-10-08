@@ -17,16 +17,23 @@ the CI job: `CI_CD_GUIDE.md` §5.9.
 
 ---
 
-## 1. SSH key for the board (once)
+## 1. SSH key for the board (once — done 2026-10-08)
 
-The CI job logs in as root with its own key, which only works from this PC.
+The CI job logs in as root with its own key: `~/.config/embedded_linux/hil/id_ed25519`
+(installed in the board's `/home/root/.ssh/authorized_keys`, comment `gitlab-hil@192.168.1.2`).
+
+The board runs **Dropbear 2022.83**, which does not support the `from="…"` key option
+(a key line with it is ignored), so the key cannot be limited to this PC: anyone who can
+run pipelines in this project can use it to log in as root on the CI board. Give push
+rights only to people you trust with that. To redo or rotate it:
 
 ```bash
 mkdir -p ~/.config/embedded_linux/hil && chmod 700 ~/.config/embedded_linux/hil
 ssh-keygen -t ed25519 -N "" -C "gitlab-hil@192.168.1.2" -f ~/.config/embedded_linux/hil/id_ed25519
 # install it on the board, restricted to logins from this PC (asks the root password once)
-sed 's/^/from="192.168.1.2" /' ~/.config/embedded_linux/hil/id_ed25519.pub | \
+cat ~/.config/embedded_linux/hil/id_ed25519.pub | \
   ssh root@192.168.1.26 'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys'
+# rotate: first remove the old line (comment gitlab-hil@192.168.1.2) from the board's authorized_keys
 # check: must log in without a password
 ssh -i ~/.config/embedded_linux/hil/id_ed25519 root@192.168.1.26 'gateway_version=$(/opt/gateway/bin/gateway --version); echo ok $gateway_version'
 ```
@@ -45,7 +52,7 @@ Settings → CI/CD → Variables → Add variable:
 | Key | Type | Value | Protect | Note |
 |---|---|---|---|---|
 | `HIL_BOARD_HOST` | Variable | `192.168.1.26` | no | |
-| `HIL_SSH_KEY` | **File** | contents of `~/.config/embedded_linux/hil/id_ed25519` | no | not Protected so the manual HIL button works on MRs; the `from="192.168.1.2"` restriction limits it to this PC. Anyone who can run pipelines can use it: give push rights only to people you trust with root on the CI board |
+| `HIL_SSH_KEY` | **File** | contents of `~/.config/embedded_linux/hil/id_ed25519` | no | not Protected so the manual HIL button works on MRs. Anyone who can run pipelines can use it (Dropbear can't restrict it to this PC, §1): give push rights only to people you trust with root on the CI board |
 | `HIL_SIM_HOST` | Variable | `192.168.1.2` | no | optional (default); this PC as the board sees it |
 
 AWS variables: §4.
@@ -57,6 +64,14 @@ AWS variables: §4.
 A separate runner, so the board's runner can be paused or broken without touching the
 others. It needs host networking (the board connects to the Modbus TCP slave the job
 starts on this PC) and the RS485 adapter.
+
+**Quick way** — create the runner in the web UI (step 1 below), then run the script; it does
+steps 2–6 (backup of `config.toml`, register, take the CH340 away from `esp32-tester`, ufw
+rule, restart, verify) and, with a personal access token (scope `api`), the CI variables of §2:
+```bash
+sudo tests/hil/setup_runner.sh glrt-XXXXXXXXXXXXXXXXXXXX [glpat-XXXXXXXXXXXXXXXXXXXX]
+```
+Running it again is harmless. The manual steps it performs:
 
 1. GitLab → `root/Embedded_Linux` → Settings → CI/CD → Runners → **New project runner**:
    Tags `stm32-hil`; untick "Run untagged jobs"; description `stm32-hil` → Create → copy
