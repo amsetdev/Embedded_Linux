@@ -490,7 +490,8 @@ Deploy → Releases (and the package version under Deploy → Package Registry),
 
 **Rig**: the DK2 `192.168.1.26` (OpenSTLinux), reached over SSH from the runner
 `stm32-hil` on this PC; the CH340 USB-RS485 adapter wired to the board's RS485; a Modbus
-TCP slave started by the job on this PC (port 5020); optionally AWS IoT with test-only
+TCP slave started by the job on this PC, which the board reaches through the SSH connection
+(no firewall rule); optionally AWS IoT with test-only
 identities. One-time setup, step by step: **[`HIL_SETUP.md`](HIL_SETUP.md)**.
 
 **What one run does** (`tests/hil/conftest.py`): backs up the board's `/etc/gateway` and
@@ -539,7 +540,7 @@ the bug is fixed** (`XPASS(strict)`), as a reminder to turn it into a normal tes
 | `inc/settings.h` contains a default Wi-Fi SSID and password (`WIFI_SSID_DEF`, `WIFI_PASSWORD_DEF`), used when the config has no `wifi` section | change it on that network, and make the defaults empty |
 | A reload (SIGHUP or a config push) runs `mqtt_cleanup()` + `mqtt_init()` in the main thread while the publisher and replay threads may be publishing on the old client | no test (needs the board); found while fixing the config push. Fix: a lock around the client, or reconnect instead of re-creating it |
 | At boot `gateway.service` waits for `systemd-networkd-wait-online`, which waits for **all** links (`wlan0`, `usb0` are down) until its timeout (~2 min) | start-up delay only; fix: a drop-in that waits for any link (`--any`) |
-| This PC's firewall blocks the board from reaching the Modbus TCP slave on port 5020 | open the port once (`HIL_SETUP.md` §3 step 6); HIL `test_04_modbus_tcp.py` fails until then |
+| **The CI DK2's OS libraries were replaced** on 2026-09-12 (before this CI work, probably by an older deployment that copied the gateway's Ubuntu libraries to `/usr/lib`): 19 files of 18 OpenSTLinux packages differ from their package (`libc6`, `libssl3`, `libcrypto3`, `libcurl4`, `libsqlite3-0`, `libz1`, `libgcc1`, `libmosquitto1`, …) and 19 non-package libraries were added. Visible effect: the board's `sqlite3` CLI refuses to run (header/library version mismatch). The gateway is not affected (it loads its own libraries from `/opt/gateway/lib`) | restore with `apt-get install --reinstall <packages>` or reflash the board; `test_04_modbus_tcp.py` reads the database on the PC meanwhile. Check other boards deployed the old way the same way (`md5sum` against `/var/lib/dpkg/info/*.md5sums`) |
 | `drive_logger` sends the application's error/warning output to a hard-coded Google Apps Script URL (device ID `SIR68b29`) | decide whether that is wanted in production; it currently gets HTTP 404 |
 | With an unreachable slave every register costs 3 retries × the response timeout: a cycle of 67 failing registers took 213 s, so the poll interval is not kept | no test yet; decide the wanted behaviour (skip a dead slave for a while, shorter timeout) |
 | 8 compiler warnings, 50 cppcheck findings | baselines (§5.2, §5.5) |

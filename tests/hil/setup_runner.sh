@@ -13,9 +13,9 @@
 #   2. registers runner "stm32-hil": Docker executor, network_mode host, the CH340
 #      RS485 adapter as /dev/ttyUSB0, pull_policy if-not-present
 #   3. removes the CH340 from the esp32-tester runner's devices (it is wired to the DK2)
-#   4. opens TCP 5020 for the board in ufw (only if ufw is active)
-#   5. restarts and verifies the runners
-#   6. (with a personal token) sets the CI variables
+#   4. restarts and verifies the runners
+#   5. (with a personal token) sets the CI variables
+# No firewall rule: the board reaches the test servers through the SSH connection.
 set -euo pipefail
 
 RUNNER_TOKEN=${1:-}
@@ -72,25 +72,17 @@ if changed:
 print("[3] CH340 removed from esp32-tester" if changed else "[3] esp32-tester does not map the CH340 (nothing to do)")
 EOF
 
-# 4. firewall
-if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-    ufw allow from "$BOARD" to any port 5020 proto tcp >/dev/null
-    echo "[4] ufw: TCP 5020 allowed from $BOARD"
-else
-    echo "[4] ufw not active - if the board still can't reach port 5020, check iptables/nftables"
-fi
-
-# 5. restart + verify
+# 4. restart + verify
 gitlab-runner restart
 sleep 3
 gitlab-runner verify 2>&1 | tail -5
-echo "[5] stm32-hil block:"
+echo "[4] stm32-hil block:"
 awk '/name = "stm32-hil"/{f=1} f&&/^\[\[runners\]\]/&&!/stm32-hil/{if(seen)exit} f{print; seen=1}' "$CONFIG" \
     | grep -E 'name|network_mode|devices|pull_policy|image' || true
 
-# 6. CI variables
+# 5. CI variables
 if [[ -n $API_TOKEN ]]; then
-    [[ -f $SSH_KEY ]] || { echo "[6] $SSH_KEY missing (DOCS/HIL_SETUP.md §1)" >&2; exit 1; }
+    [[ -f $SSH_KEY ]] || { echo "[5] $SSH_KEY missing (DOCS/HIL_SETUP.md §1)" >&2; exit 1; }
     setvar() {   # key type value
         local url="$GITLAB/api/v4/projects/$PROJECT_ID/variables"
         local code
@@ -101,11 +93,11 @@ if [[ -n $API_TOKEN ]]; then
         curl -sf -X "$method" -H "PRIVATE-TOKEN: $API_TOKEN" "$target" \
             --form "key=$1" --form "variable_type=$2" --form "value=$3" \
             --form "protected=false" --form "masked=false" >/dev/null
-        echo "[6] CI variable $1 ($2) set"
+        echo "[5] CI variable $1 ($2) set"
     }
     setvar HIL_BOARD_HOST env_var "$BOARD"
     setvar HIL_SSH_KEY file "$(cat "$SSH_KEY")"
 else
-    echo "[6] no personal token: add HIL_BOARD_HOST and HIL_SSH_KEY in the web UI (DOCS/HIL_SETUP.md §2)"
+    echo "[5] no personal token: add HIL_BOARD_HOST and HIL_SSH_KEY in the web UI (DOCS/HIL_SETUP.md §2)"
 fi
 echo "done - run the manual hil-tests job of a ci/hil pipeline"
