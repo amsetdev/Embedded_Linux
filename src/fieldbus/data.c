@@ -18,6 +18,7 @@
 #include <stdatomic.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
 
 /** @brief Registers parsed from smart_rtu_config.json by parse_registers(). */
 static ModbusPoint points[MAX_POINTS];
@@ -27,6 +28,9 @@ static int point_count = 0;
 
 /** @brief Set by data_request_reload(); read_all_points() re-parses the registers. */
 static atomic_int reload_pending = 0;
+
+/** @brief Held for every bus transaction and while points[] is re-parsed (data_bus_lock()). */
+static pthread_mutex_t bus_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* -------------------------------------------------------------------------- */
 /* Fieldbus driver state                                                      */
@@ -456,7 +460,11 @@ void read_all_points(void)
     /* A reload requested by another thread runs here, in the polling thread,
      * so points[] never changes during a read cycle. */
     if (atomic_exchange(&reload_pending, 0))
+    {
+        data_bus_lock();
         parse_registers();
+        data_bus_unlock();
+    }
 
     int success = 0;
     int failed = 0;
@@ -465,7 +473,12 @@ void read_all_points(void)
 
     for (int i = 0; i < point_count && running; i++)
     {
-        if (read_point(&points[i]))
+        /* Per point, so a write command waits for at most one read. */
+        data_bus_lock();
+        int ok = read_point(&points[i]);
+        data_bus_unlock();
+
+        if (ok)
             success++;
         else
             failed++;
@@ -581,6 +594,18 @@ int data_write_block(int slave_id,
             slave_id, start, count);
 
     return 0;
+}
+
+/* Documented in data.h. */
+void data_bus_lock(void)
+{
+    pthread_mutex_lock(&bus_mutex);
+}
+
+/* Documented in data.h. */
+void data_bus_unlock(void)
+{
+    pthread_mutex_unlock(&bus_mutex);
 }
 
 /* Documented in data.h. */

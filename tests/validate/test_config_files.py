@@ -2,6 +2,9 @@
 
 Files checked: configs/**/*.json (real device configs, one per device), a root
 smart_rtu_config*.json, and tests/fixtures/configs/*.json (known-good test configs).
+Smart RTU tool project files (flat keys + "points", like the root
+smart_rtu_config.json) are converted with the tool's own code and the device
+config it would send is checked.
 """
 
 import json
@@ -31,3 +34,13 @@ def test_known_good_fixture_exists():
 def test_config_file_valid(path):
     problems = check_file(path)
     assert not problems, f"{path.relative_to(REPO)} has {len(problems)} problem(s):\n  " + "\n  ".join(problems)
+
+
+def test_tool_project_file_checked_as_sent(tmp_path):
+    """A project file is converted with the tool's code; problems say so."""
+    project = json.loads((REPO / "smart_rtu_config.json").read_text())
+    project["points"][0]["label"] = "L" * 70
+    path = tmp_path / "project.json"
+    path.write_text(json.dumps(project))
+    problems = check_file(path)
+    assert any(p.startswith("(as sent by the tool)") and "70 bytes" in p for p in problems)

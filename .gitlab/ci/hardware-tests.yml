@@ -35,6 +35,8 @@ hil-tests:
     # Names only, never values
     - echo "HIL variables present:" $(env | grep -o '^HIL_[A-Z_]*' | sort | tr '\n' ' ')
     - test -n "$HIL_BOARD_HOST" -a -n "$HIL_SSH_KEY" || { echo "HIL_BOARD_HOST / HIL_SSH_KEY not set (CI guide §5.9)"; exit 1; }
+    # local MQTT broker for the write-command tests (tests/hil/local_broker.py)
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends mosquitto > /dev/null
     - pip install -q -r tests/requirements.txt -r tests/hil/requirements.txt
     # --tb=short: tracebacks without argument values (no certificate contents in the log)
     - python -m pytest -c tests/pytest.ini tests/hil -m hardware -v -rs --tb=short

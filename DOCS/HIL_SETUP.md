@@ -126,18 +126,23 @@ Replace `REGION`, `ACCOUNT` and, if you choose another name, `HIL-DK2` everywher
      {"Effect": "Allow", "Action": "iot:Publish", "Resource": [
        "arn:aws:iot:REGION:ACCOUNT:topic/hil/HIL-DK2/telemetry",
        "arn:aws:iot:REGION:ACCOUNT:topic/devices/HIL-DK2/ota/status",
-       "arn:aws:iot:REGION:ACCOUNT:topic/amset/HIL-DK2/config/ack"]},
+       "arn:aws:iot:REGION:ACCOUNT:topic/amset/HIL-DK2/config/ack",
+       "arn:aws:iot:REGION:ACCOUNT:topic/devices/HIL-DK2/commands/response"]},
      {"Effect": "Allow", "Action": "iot:Subscribe", "Resource": [
        "arn:aws:iot:REGION:ACCOUNT:topicfilter/devices/HIL-DK2/ota/app",
        "arn:aws:iot:REGION:ACCOUNT:topicfilter/devices/HIL-DK2/ota/system",
-       "arn:aws:iot:REGION:ACCOUNT:topicfilter/amset/HIL-DK2/config/set"]},
+       "arn:aws:iot:REGION:ACCOUNT:topicfilter/amset/HIL-DK2/config/set",
+       "arn:aws:iot:REGION:ACCOUNT:topicfilter/devices/HIL-DK2/commands"]},
      {"Effect": "Allow", "Action": "iot:Receive", "Resource": [
        "arn:aws:iot:REGION:ACCOUNT:topic/devices/HIL-DK2/ota/app",
        "arn:aws:iot:REGION:ACCOUNT:topic/devices/HIL-DK2/ota/system",
-       "arn:aws:iot:REGION:ACCOUNT:topic/amset/HIL-DK2/config/set"]}]}
+       "arn:aws:iot:REGION:ACCOUNT:topic/amset/HIL-DK2/config/set",
+       "arn:aws:iot:REGION:ACCOUNT:topic/devices/HIL-DK2/commands"]}]}
    ```
    This is also what a **production** gateway's policy needs (with its own device ID and
-   telemetry topic): the config topics are new since the bug-fix pass (`CI_CD_GUIDE.md` §6.1).
+   telemetry topic): the config topics are new since the bug-fix pass (`CI_CD_GUIDE.md` §6.1),
+   the `commands` topics come with the Modbus write commands (`MODBUS_WRITE_COMMANDS.md`).
+   The write-command HIL tests themselves use a local broker, not AWS.
 2. **Observer certificate** (the tests' own MQTT client): Security → Certificates → Add
    certificate → Create certificate → activate → download cert + key → attach policy
    `hil-dk2-observer`:
