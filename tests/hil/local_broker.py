@@ -14,12 +14,10 @@ a device certificate (installed on the board) and a client certificate for the t
 """
 
 import datetime
-import select
 import shutil
 import socket
 import subprocess
 import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -110,37 +108,7 @@ class LocalBroker:
                 if self.proc.poll() is not None or time.monotonic() > deadline:
                     raise RuntimeError(f"local mosquitto did not start: {(self.dir / 'mosquitto.log').read_text()}")
                 time.sleep(0.2)
-        self.transport = board.ssh.get_transport()
-        self.transport.request_port_forward("127.0.0.1", BOARD_PORT, handler=self._on_channel)
-
-    # ------------------------------------------------------------ forwarding
-    def _on_channel(self, chan, origin, server):
-        threading.Thread(target=self._pump, args=(chan,), daemon=True).start()
-
-    def _pump(self, chan):
-        try:
-            sock = socket.create_connection(("127.0.0.1", self.port), 5)
-        except OSError:
-            chan.close()
-            return
-        try:
-            while True:
-                r, _, _ = select.select([sock, chan], [], [], 1.0)
-                if sock in r:
-                    data = sock.recv(65536)
-                    if not data:
-                        break
-                    chan.sendall(data)
-                if chan in r:
-                    data = chan.recv(65536)
-                    if not data:
-                        break
-                    sock.sendall(data)
-        except OSError:
-            pass
-        finally:
-            sock.close()
-            chan.close()
+        board.reverse_forward(BOARD_PORT, self.port)
 
     # ------------------------------------------------------------ for the tests
     def install_device_certs(self):
@@ -159,10 +127,7 @@ class LocalBroker:
                         client_id="hil-observer")
 
     def close(self):
-        try:
-            self.transport.cancel_port_forward("127.0.0.1", BOARD_PORT)
-        except Exception:
-            pass
+        self.board.cancel_forward(BOARD_PORT)
         self.proc.terminate()
         try:
             self.proc.wait(10)

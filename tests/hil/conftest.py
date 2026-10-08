@@ -12,7 +12,6 @@ Variables:
   HIL_SSH_KEY        private key file for root@board (CI: File variable), or
   HIL_SSH_PASSWORD   password (local runs only)
   HIL_BUILD_DIR      build-firmware artifacts: gateway-<ver>.tar.gz, build_info.json (default build)
-  HIL_SIM_HOST       this PC's IP as the board sees it (Modbus TCP slave), default 192.168.1.2
   HIL_RTU_PORT       RS485 adapter wired to the board's RS485 (RTU tests skip without it)
   AWS variables: see aws_link.py
 """
@@ -34,9 +33,9 @@ from sim import Slaves  # noqa: E402
 REPO = Path(__file__).resolve().parents[2]
 HOST = os.environ.get("HIL_BOARD_HOST", "")
 BUILD = Path(os.environ.get("HIL_BUILD_DIR", REPO / "build"))
-SIM_HOST = os.environ.get("HIL_SIM_HOST", "192.168.1.2")
 RTU_PORT = os.environ.get("HIL_RTU_PORT", "")
-TCP_PORT = int(os.environ.get("HIL_TCP_PORT", "5020"))
+TCP_PORT = int(os.environ.get("HIL_TCP_PORT", "5020"))   # Modbus TCP slave on this PC (127.0.0.1)
+BOARD_TCP_PORT = 15020   # the board reaches it at 127.0.0.1:15020 through the SSH connection
 DEVICE_ID = os.environ.get("HIL_DEVICE_ID") or "HIL-DK2"
 BACKUP = "/var/lib/gateway-hil-backup"
 INTERVAL = 5
@@ -70,7 +69,7 @@ def base_config(registers=(), tcp=False, mqtt=None):
         "device": {"device_id": DEVICE_ID, "slave_id": 1, "baud": 9600, "parity": "None",
                    "stop_bits": 1, "interval_sec": INTERVAL},
         "wifi": {"ssid": "", "password": "", "country": "IN", "enable": 0},
-        "modbus_tcp": {"enable": 1 if tcp else 0, "ip": SIM_HOST if tcp else "", "port": TCP_PORT, "slave_id": 1},
+        "modbus_tcp": {"enable": 1 if tcp else 0, "ip": "127.0.0.1" if tcp else "", "port": BOARD_TCP_PORT, "slave_id": 1},
         "mqtt": mqtt or {"broker": "", "port": 8883, "client_id": DEVICE_ID,
                          "ca_cert": f"{CERTS}/hil-ca.crt", "device_cert": f"{CERTS}/hil-device.crt",
                          "private_key": f"{CERTS}/hil-device.key", "topic": f"hil/{DEVICE_ID}/telemetry"},
@@ -165,7 +164,7 @@ def gateway(board, build_info):
 
 
 @pytest.fixture(scope="session")
-def slaves():
+def slaves(board):
     """Simulated RTU slaves 1 and 2 (on HIL_RTU_PORT) and a Modbus TCP slave (port HIL_TCP_PORT)."""
     s = Slaves()
     for reg, value in RTU_REGISTERS:
@@ -174,7 +173,9 @@ def slaves():
     s.start(rtu_port=RTU_PORT or None,
             rtu_serial=dict(baudrate=9600, parity="N", stopbits=1, bytesize=8, timeout=0.05),
             tcp_port=TCP_PORT)
+    board.reverse_forward(BOARD_TCP_PORT, TCP_PORT)
     yield s
+    board.cancel_forward(BOARD_TCP_PORT)
     s.stop()
 
 

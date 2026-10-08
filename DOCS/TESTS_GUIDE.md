@@ -352,5 +352,5 @@ the job and the file-by-file table: [`CI_CD_GUIDE.md` §5.9](CI_CD_GUIDE.md#59-h
 | Modbus TCP database in `/tmp` (lost at reboot) | `/var/lib/gateway/modbus_tcp.db` | `test_04_modbus_tcp.py::test_database_in_data_dir` |
 | Offline storage path hard-coded to the legacy directory | `<data dir>/storage` | `test_05_store_forward.py` |
 | A restart during the 30 s Wi-Fi wait at start-up ended in SIGKILL (the wait ignored the stop request) | the wait stops on shutdown | `test_99_no_crash.py` |
-| Modbus TCP thread gave up for good when the slave was down at start-up; its argument was a pointer to a stack variable that had gone out of scope | retries every 5 s; argument `static` | `test_04_modbus_tcp.py` (needs the firewall opening, `HIL_SETUP.md` §3) |
+| Modbus TCP thread gave up for good when the slave was down at start-up; its argument was a pointer to a stack variable that had gone out of scope | retries every 5 s; argument `static` | `test_04_modbus_tcp.py` (the board reaches the TCP slave through the SSH connection) |
 | RS485 replies never reached the board: the image's device tree didn't mux PE9 as UART7 RTS (DE) nor enable RS-485 (a 157C board; the README change was for a 157F) | board DTB patched (`DEVICETREE_RS485.md`) | `test_03_modbus_rtu.py` (5 tests) |

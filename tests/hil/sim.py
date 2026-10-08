@@ -67,7 +67,7 @@ class Slaves:
                 s = ModbusSerialServer(self.rtu, framer=ModbusRtuFramer, port=rtu_port, **(rtu_serial or {}))
                 self.servers.append(s)
             if tcp_port:
-                self.servers.append(ModbusTcpServer(self.tcp, address=("0.0.0.0", tcp_port)))
+                self.servers.append(ModbusTcpServer(self.tcp, address=("127.0.0.1", tcp_port)))
             tasks = [asyncio.create_task(s.serve_forever()) for s in self.servers]
             await asyncio.sleep(0.5)
             self.errors = [t.exception() for t in tasks if t.done() and t.exception()]

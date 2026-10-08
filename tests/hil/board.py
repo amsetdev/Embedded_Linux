@@ -11,7 +11,10 @@ fails, and callers must not pass secrets on command lines (use put()).
 
 import io
 import re
+import select
 import shlex
+import socket
+import threading
 import time
 from dataclasses import dataclass
 
@@ -82,6 +85,41 @@ class Board:
 
     def close(self):
         self.ssh.close()
+
+    # ------------------------------------------------------------ tunnels
+    def reverse_forward(self, board_port, local_port):
+        """Board 127.0.0.1:board_port → this PC 127.0.0.1:local_port, through the SSH
+        connection: the board reaches test servers on this PC without a firewall rule."""
+        def pump(chan):
+            try:
+                sock = socket.create_connection(("127.0.0.1", local_port), 5)
+            except OSError:
+                chan.close()
+                return
+            try:
+                while True:
+                    r, _, _ = select.select([sock, chan], [], [], 1.0)
+                    for src, dst in ((sock, chan), (chan, sock)):
+                        if src in r:
+                            data = src.recv(65536)
+                            if not data:
+                                return
+                            dst.sendall(data)
+            except OSError:
+                pass
+            finally:
+                sock.close()
+                chan.close()
+
+        self.ssh.get_transport().request_port_forward(
+            "127.0.0.1", board_port,
+            handler=lambda chan, origin, server: threading.Thread(target=pump, args=(chan,), daemon=True).start())
+
+    def cancel_forward(self, board_port):
+        try:
+            self.ssh.get_transport().cancel_port_forward("127.0.0.1", board_port)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------- commands
     def run(self, cmd, check=True, timeout=120):

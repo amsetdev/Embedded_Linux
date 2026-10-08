@@ -9,7 +9,7 @@ the CI job: `CI_CD_GUIDE.md` §5.9.
  │ gitlab-runner "stm32-hil" (Docker, host    │──────────►│ gateway.service (/opt/gateway)│
  │   network) runs tests/hil:                 │           │                              │
  │   - SSH: install package, configs, journal │  Modbus   │                              │
- │   - Modbus TCP slave :5020  ◄──────────────┼───TCP─────│ mb_tcp thread                │
+ │   - Modbus TCP slave 127.0.0.1:5020 ◄─SSH tunnel (board 127.0.0.1:15020)─ mb_tcp thread │
  │   - Modbus RTU slaves 1,2 on the CH340 ────┼──RS485────│ ttySTM2 (RS485)              │
  │   - AWS IoT observer ─────► AWS IoT ◄──────┼───MQTT────│ MQTT (test certificate)      │
  └───────────────────────────────────────────┘           └──────────────────────────────┘
@@ -53,7 +53,6 @@ Settings → CI/CD → Variables → Add variable:
 |---|---|---|---|---|
 | `HIL_BOARD_HOST` | Variable | `192.168.1.26` | no | |
 | `HIL_SSH_KEY` | **File** | the key **text** — the whole content of `~/.config/embedded_linux/hil/id_ed25519` (`-----BEGIN …` to `-----END …`), **not** the path | no | not Protected so the manual HIL button works on MRs. Anyone who can run pipelines can use it (Dropbear can't restrict it to this PC, §1): give push rights only to people you trust with root on the CI board |
-| `HIL_SIM_HOST` | Variable | `192.168.1.2` | no | optional (default); this PC as the board sees it |
 
 AWS variables: §4.
 
@@ -62,12 +61,13 @@ AWS variables: §4.
 ## 3. The runner `stm32-hil` (once)
 
 A separate runner, so the board's runner can be paused or broken without touching the
-others. It needs host networking (the board connects to the Modbus TCP slave the job
-starts on this PC) and the RS485 adapter.
+others. It needs SSH access to the board and the RS485 adapter. The board reaches the
+test servers the job starts on this PC (Modbus TCP slave, MQTT broker) **through the SSH
+connection** (reverse port forwards, `Board.reverse_forward()`), so no firewall rule is needed.
 
 **Quick way** — create the runner in the web UI (step 1 below), then run the script; it does
-steps 2–6 (backup of `config.toml`, register, take the CH340 away from `esp32-tester`, ufw
-rule, restart, verify) and, with a personal access token (scope `api`), the CI variables of §2:
+steps 2–5 (backup of `config.toml`, register, take the CH340 away from `esp32-tester`,
+restart, verify) and, with a personal access token (scope `api`), the CI variables of §2:
 ```bash
 sudo tests/hil/setup_runner.sh glrt-XXXXXXXXXXXXXXXXXXXX [glpat-XXXXXXXXXXXXXXXXXXXX]
 ```
@@ -100,9 +100,10 @@ Running it again is harmless. The manual steps it performs:
    sudo gitlab-runner verify          # stm32-hil: is alive
    sudo gitlab-runner list
    ```
-6. If Docker reports `port 5020 already in use`, something else listens on it: `sudo ss -ltnp | grep 5020`.
-   If the board can't reach the TCP slave, allow it: `sudo ufw allow from 192.168.1.26 to any port 5020 proto tcp`
-   (only when ufw is active: `sudo ufw status`).
+6. If the job reports `port 5020 already in use`, something else listens on it: `sudo ss -ltnp | grep 5020`
+   (or set `HIL_TCP_PORT`). No firewall rule is needed: the board connects through the SSH tunnel.
+   A rule added earlier (`sudo ufw allow from 192.168.1.26 to any port 5020 proto tcp`) can be removed
+   with `sudo ufw delete allow from 192.168.1.26 to any port 5020 proto tcp`.
 
 `concurrent = 1` (global) still applies: HIL waits for other jobs on this PC. The job's
 `resource_group: stm32-hil-board` also stops two pipelines from using the board at once.
