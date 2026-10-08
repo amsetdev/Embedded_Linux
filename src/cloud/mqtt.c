@@ -328,10 +328,18 @@ int mqtt_publish_to(const char *topic, const char *payload, int qos)
 }
 
 /**
- * @brief Registers the MQTT disconnect callback.
+ * @brief Called by the connectivity monitor when the internet is up but MQTT is not connected.
+ *
+ * Re-registers the disconnect callback. Does nothing when mqtt_init() failed (no
+ * broker configured, certificate error): there is no client then, and using the
+ * NULL client crashed the application. The mosquitto network loop reconnects an
+ * existing client by itself (mosquitto_reconnect_delay_set()).
  */
 void reconnect_mqtt(void)
 {
+    if (!mosq)
+        return;
+
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 }
 
