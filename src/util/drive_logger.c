@@ -917,6 +917,12 @@ void drive_logger_stop(void)
     s_task_running  = false;
     pthread_cond_signal(&s_queue.not_empty);
 
+    /* The reader thread blocks in read() on the stderr pipe: one byte wakes it up
+     * so it sees s_task_running == false (otherwise the join waits forever and
+     * systemd has to SIGKILL the service). */
+    if (write(STDERR_FILENO, "\n", 1) < 0)
+        IL_W("could not wake the reader thread");
+
     pthread_join(s_reader_thread, NULL);
     pthread_join(s_upload_thread, NULL);
 

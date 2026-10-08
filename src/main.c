@@ -386,10 +386,6 @@ static void *mqtt_publisher_thread_func(void *arg)
 
         mqtt_publish(payload);
 
-        /* ---- HTTPS test endpoint ---- */
-
-        https_post("https://httpbin.org/post", payload);
-
         free(payload);
 
         /* ---- Report watchdog heartbeat ---- */
@@ -857,7 +853,8 @@ int main(int argc, char **argv)
 
     if (cfg.modbus_tcp_enable && cfg.modbus_tcp_ip[0] != '\0')
     {
-        mb_thread_arg_t mb_arg;
+        /* static: the thread reads it after this block has ended */
+        static mb_thread_arg_t mb_arg;
         memset(&mb_arg, 0, sizeof(mb_arg));
 
         strncpy(mb_arg.slave_ip,

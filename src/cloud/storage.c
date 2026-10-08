@@ -297,7 +297,12 @@ static void *replay_worker(void *arg)
 
     while (atomic_load(&replay_running))
     {
-        sleep(REPLAY_INTERVAL_SEC);
+        /* Sleep in 1 s steps so a shutdown doesn't wait for the full interval. */
+        for (int s = 0; s < REPLAY_INTERVAL_SEC && atomic_load(&replay_running); s++)
+            sleep(1);
+
+        if (!atomic_load(&replay_running))
+            break;
 
         char name[SF_NAME_MAX];
         sf_replay_result_t last;
