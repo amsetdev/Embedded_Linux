@@ -42,6 +42,7 @@
 #include "paths.h"
 #include "data.h"
 #include "mqtt.h"
+#include "connection.h"
 #include "https.h"
 #include "storage.h"
 #include "mb_tcp.h"
@@ -702,6 +703,13 @@ int main(int argc, char **argv)
 
     mqtt_init();
 
+    /*
+     * Connectivity monitor: maintains internet_up, which mqtt_publish() and the
+     * offline replay check before every publish. Without it internet_up stays 0
+     * and every payload is stored offline, even with a working MQTT connection.
+     */
+    connection_init();
+
     http_init();
 
     /* ------------------------------------------------------------------ */
@@ -1041,6 +1049,12 @@ int main(int argc, char **argv)
 
     if (disp_ok)
         drm_cleanup();
+
+    /* ------------------------------------------------------------------ */
+    /* Connectivity monitor cleanup                                       */
+    /* ------------------------------------------------------------------ */
+
+    connection_stop();
 
     /* ------------------------------------------------------------------ */
     /* Offline storage cleanup                                           */
