@@ -1,0 +1,41 @@
+# STM32MP157F-DK2 gateway (Embedded_Linux) — GitLab CI/CD root pipeline
+# Guide: DOCS/CI_CD_GUIDE.md. Stages are enabled step by step;
+# stages with no jobs yet are simply skipped by GitLab.
+
+stages:
+  - validate          # step 2: config schema / rules / real firmware parser  <-- active
+  - static-analysis   # step 4: cppcheck baseline + Doxygen gate  <-- active
+  - build             # step 1: cross-compile (armhf) + compiler-warning gate  <-- active
+  - unit-test         # steps 3/5: Python tool tests + host C tests  <-- active
+  - hardware-test     # step 7: HIL on the CI DK2 board (runner tag `stm32-hil`)  <-- active
+  - release           # step 6: tags v<APP_VERSION_DEF> only  <-- active
+
+# One pipeline per change: MR pipelines for branches with an open MR,
+# branch pipelines otherwise, plus tag pipelines.
+workflow:
+  rules:
+    # "Run pipeline" button (Build > Pipelines): always allowed, even with an open MR
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+variables:
+  BUILD_IMAGE: "ubuntu:22.04"     # same base as the Dockerfile; toolchain from tools/ci/install_toolchain.sh
+  GIT_DEPTH: "20"
+
+default:
+  interruptible: true
+  tags:
+    - docker
+
+include:
+  - local: .gitlab/ci/validate.yml
+  - local: .gitlab/ci/static-analysis.yml
+  - local: .gitlab/ci/build.yml
+  - local: .gitlab/ci/unit-tests.yml
+  - local: .gitlab/ci/host-tests.yml
+  - local: .gitlab/ci/hardware-tests.yml
+  - local: .gitlab/ci/release.yml

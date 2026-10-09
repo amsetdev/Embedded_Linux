@@ -50,9 +50,9 @@ extern "C" {
 #define POLL_INTERVAL_SEC           120
 
 /**
- * @brief SQLite database file path.
+ * @brief SQLite database file name inside the data directory (paths.h).
  */
-#define DB_PATH                     "/tmp/modbus_data.db"
+#define DB_FILE                     "modbus_tcp.db"
 
 /* -------------------------------------------------------------------------- */
 /* Data Types                                                                 */

@@ -7,6 +7,7 @@
  * a Google Apps Script endpoint via HTTP POST.
  */
 
+/** @brief Enables GNU/POSIX extensions in the libc headers (must precede every include). */
 #define _GNU_SOURCE
 #include "drive_logger.h"
 
@@ -21,8 +22,15 @@
 #include <pthread.h>
 #include <curl/curl.h>
 
+/** @brief The original stderr, saved before stderr is redirected into the capture pipe. */
 static FILE *s_real_stderr = NULL;
 
+/**
+ * @brief Logger-internal log line, written to the real stderr so it is never captured itself.
+ *
+ * @param lvl Level letter ("I", "W", "E").
+ * @param fmt printf format, followed by its arguments.
+ */
 #define _IL(lvl, fmt, ...) \
     do { \
         FILE *_f = s_real_stderr ? s_real_stderr : stderr; \
@@ -30,51 +38,71 @@ static FILE *s_real_stderr = NULL;
         fflush(_f); \
     } while (0)
 
+/** @brief Logger-internal info line (see _IL()). @param fmt printf format and arguments. */
 #define IL_I(fmt, ...)  _IL("I", fmt, ##__VA_ARGS__)
+/** @brief Logger-internal warning line (see _IL()). @param fmt printf format and arguments. */
 #define IL_W(fmt, ...)  _IL("W", fmt, ##__VA_ARGS__)
+/** @brief Logger-internal error line (see _IL()). @param fmt printf format and arguments. */
 #define IL_E(fmt, ...)  _IL("E", fmt, ##__VA_ARGS__)
 
+/** @brief One captured stderr line waiting in the queue. */
 typedef struct {
-    char line[DRIVE_LOGGER_LOG_LINE_MAX];
-    bool is_error;
+    char line[DRIVE_LOGGER_LOG_LINE_MAX];   /**< The line, NUL-terminated (truncated if longer). */
+    bool is_error;                          /**< true: error line, false: warning line. */
 } log_item_t;
 
 
+/** @brief Fixed-size ring buffer between the stderr reader thread and the collector. */
 typedef struct {
-    log_item_t       items[DRIVE_LOGGER_QUEUE_SIZE];
-    int              head, tail, count;
-    pthread_mutex_t  lock;
-    pthread_cond_t   not_empty;
+    log_item_t       items[DRIVE_LOGGER_QUEUE_SIZE];   /**< Ring storage. */
+    int              head;       /**< Index of the oldest item. */
+    int              tail;       /**< Index where the next item is written. */
+    int              count;      /**< Number of queued items. */
+    pthread_mutex_t  lock;       /**< Protects all fields. */
+    pthread_cond_t   not_empty;  /**< Signalled when an item is added. */
 } log_queue_t;
 
 
+/** @brief Batch of log lines collected for the next upload. */
 typedef struct {
-    char            *buf;
-    size_t           buf_size;
-    size_t           position;
-    int              log_count;
-    bool             is_collecting;
-    bool             upload_in_progress;
-    bool             upload_successful;
-    time_t           last_log_time;
-    pthread_mutex_t  lock;
+    char            *buf;                 /**< Heap buffer holding the batch text. */
+    size_t           buf_size;            /**< Allocated size of buf. */
+    size_t           position;            /**< Bytes used in buf. */
+    int              log_count;           /**< Lines in the batch (upload at DRIVE_LOGGER_TARGET_LOG_COUNT). */
+    bool             is_collecting;       /**< New lines are accepted (false once the batch is full). */
+    bool             upload_in_progress;  /**< An upload of this batch is running. */
+    bool             upload_successful;   /**< The batch was uploaded; reset before collecting again. */
+    time_t           last_log_time;       /**< Time of the last line; an idle batch is uploaded after DRIVE_LOGGER_INACTIVITY_TIMEOUT_S. */
+    pthread_mutex_t  lock;                /**< Protects all fields. */
 } log_buffer_t;
 
+/** @brief Queue of captured lines (reader thread -> collector). */
 static log_queue_t  s_queue;
+/** @brief Batch being collected for upload. */
 static log_buffer_t s_buf;
 
+/** @brief drive_logger_init() succeeded and capture is on. */
 static volatile bool s_logger_active = false;
+/** @brief Worker threads keep running while true; cleared to stop them. */
 static volatile bool s_task_running  = false;
 
+/** @brief Read end of the pipe that stderr is redirected into. */
 static int       s_pipe_read_fd = -1;
 
+/** @brief Thread uploading full or idle batches. */
 static pthread_t s_upload_thread;
+/** @brief Thread reading the stderr pipe line by line. */
 static pthread_t s_reader_thread;
 
+/** @brief Lines captured since start (statistics). */
 static volatile uint32_t s_total_captured  = 0;
+/** @brief Error lines captured since start. */
 static volatile uint32_t s_total_errors    = 0;
+/** @brief Warning lines captured since start. */
 static volatile uint32_t s_total_warnings  = 0;
+/** @brief Batches uploaded successfully. */
 static volatile uint32_t s_total_uploaded  = 0;
+/** @brief Failed upload attempts. */
 static volatile uint32_t s_upload_failures = 0;
 
 /**
@@ -889,6 +917,12 @@ void drive_logger_stop(void)
     s_task_running  = false;
     pthread_cond_signal(&s_queue.not_empty);
 
+    /* The reader thread blocks in read() on the stderr pipe: one byte wakes it up
+     * so it sees s_task_running == false (otherwise the join waits forever and
+     * systemd has to SIGKILL the service). */
+    if (write(STDERR_FILENO, "\n", 1) < 0)
+        IL_W("could not wake the reader thread");
+
     pthread_join(s_reader_thread, NULL);
     pthread_join(s_upload_thread, NULL);
 
@@ -901,7 +935,7 @@ void drive_logger_stop(void)
          s_total_captured, s_total_uploaded, s_upload_failures);
 }
 
-/**
+/*
  * @brief Writes a formatted log message.
  *
  * Formats the message with the given level prefix and tag, then
@@ -929,7 +963,7 @@ void drive_logger_write(int level, const char *tag, const char *fmt, ...)
     fflush(stderr);
 }
 
-/**
+/*
  * @brief Retrieves current logger statistics.
  *
  * Copies the current values of all internal counters into the

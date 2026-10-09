@@ -1,5 +1,5 @@
 /**
- * @file http.c
+ * @file https.c
  * @brief HTTP/HTTPS communication module using libcurl.
  *
  * This module provides wrapper functions for performing HTTP and HTTPS
@@ -72,7 +72,7 @@ static int perform_request(CURL *curl)
     return (code >= 200 && code < 300);
 }
 
-/**
+/*
  * @brief Sends an HTTP GET request.
  *
  * Performs an HTTP GET request to the specified URL.
@@ -99,7 +99,7 @@ int http_get(const char *url)
     return ret;
 }
 
-/**
+/*
  * @brief Sends an HTTP POST request with JSON data.
  *
  * Performs an HTTP POST request using the supplied JSON payload.
@@ -135,7 +135,7 @@ int http_post(const char *url, const char *json)
     return ret;
 }
 
-/**
+/*
  * @brief Sends an HTTP PUT request with JSON data.
  *
  * Performs an HTTP PUT request using the supplied JSON payload.
@@ -172,7 +172,7 @@ int http_put(const char *url, const char *json)
     return ret;
 }
 
-/**
+/*
  * @brief Sends an HTTP DELETE request.
  *
  * Performs an HTTP DELETE request for the specified URL.
@@ -200,7 +200,7 @@ int http_delete(const char *url)
     return ret;
 }
 
-/**
+/*
  * @brief Sends an HTTPS GET request.
  *
  * This function is a thin wrapper around http_get(). The protocol
@@ -217,7 +217,7 @@ int https_get(const char *url)
     return http_get(url);
 }
 
-/**
+/*
  * @brief Sends an HTTPS POST request with JSON data.
  *
  * This function forwards the request to http_post().
@@ -234,7 +234,7 @@ int https_post(const char *url, const char *json)
     return http_post(url, json);
 }
 
-/**
+/*
  * @brief Sends an HTTPS PUT request with JSON data.
  *
  * This function forwards the request to http_put().
@@ -251,7 +251,7 @@ int https_put(const char *url, const char *json)
     return http_put(url, json);
 }
 
-/**
+/*
  * @brief Sends an HTTPS DELETE request.
  *
  * This function forwards the request to http_delete().
@@ -282,7 +282,7 @@ static size_t write_file_cb(void *ptr, size_t size, size_t nmemb, void *stream)
     return fwrite(ptr, size, nmemb, (FILE *)stream);
 }
 
-/**
+/*
  * @brief Downloads a file from a URL to local storage.
  *
  * @param url         Source URL.

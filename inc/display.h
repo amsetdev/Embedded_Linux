@@ -220,19 +220,19 @@ int ui_button(int x, int y, int w, int h, const char *lbl,
 /** @brief Converts 8-bit RGB values to RGB565 format. */
 #define RGB(r,g,b) ((uint16_t)((((r)&0xF8u)<<8)|(((g)&0xFCu)<<3)|((b)>>3)))
 
-#define COL_BLACK   RGB(0,   0,   0)
-#define COL_WHITE   RGB(255, 255, 255)
-#define COL_GOLD    RGB(240, 165, 0)
-#define COL_BLUE    RGB(5,   10,  40)
-#define COL_HDRBLUE RGB(0,   70, 150)
-#define COL_GREEN   RGB(0,  210,  80)
-#define COL_RED     RGB(255, 60,  60)
-#define COL_ORANGE  RGB(255,180,   0)
-#define COL_CYAN    RGB(0,  210, 240)
-#define COL_GRAY    RGB(160,160,160)
-#define COL_DKGRAY  RGB(40,  40,  80)
-#define COL_PURPLE  RGB(120,140,255)
-#define COL_DKBLUE  RGB(20,  40,  90)
+#define COL_BLACK   RGB(0,   0,   0)    /**< Black. */
+#define COL_WHITE   RGB(255, 255, 255)  /**< White. */
+#define COL_GOLD    RGB(240, 165, 0)    /**< Gold (accents). */
+#define COL_BLUE    RGB(5,   10,  40)   /**< Dark navy screen background. */
+#define COL_HDRBLUE RGB(0,   70, 150)   /**< Header bar blue. */
+#define COL_GREEN   RGB(0,  210,  80)   /**< Green: OK states. */
+#define COL_RED     RGB(255, 60,  60)   /**< Red: error states. */
+#define COL_ORANGE  RGB(255,180,   0)   /**< Orange: warnings, hints. */
+#define COL_CYAN    RGB(0,  210, 240)   /**< Cyan: values. */
+#define COL_GRAY    RGB(160,160,160)    /**< Gray: secondary text. */
+#define COL_DKGRAY  RGB(40,  40,  80)   /**< Dark gray: panels, borders. */
+#define COL_PURPLE  RGB(120,140,255)    /**< Purple: labels. */
+#define COL_DKBLUE  RGB(20,  40,  90)   /**< Dark blue: buttons. */
 
 /* -------------------------------------------------------------------------- */
 /* Screen Rendering                                                           */

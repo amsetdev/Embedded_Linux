@@ -1,4 +1,5 @@
 #include "mb_tcp.h"
+#include "paths.h"
 #include "watchdog.h"
 
 #include <stdio.h>
@@ -39,7 +40,10 @@ typedef struct {
  */
 static int db_init(sqlite3 **db)
 {
-    int rc = sqlite3_open(DB_PATH, db);
+    char db_path[PATHS_MAX + 32];
+    paths_data(DB_FILE, db_path, sizeof(db_path));
+
+    int rc = sqlite3_open(db_path, db);
     if (rc != SQLITE_OK) {
         fprintf(stderr, "[DB ] Cannot open database: %s\n",
                 sqlite3_errmsg(*db));
@@ -62,7 +66,7 @@ static int db_init(sqlite3 **db)
         return -1;
     }
 
-    printf("[ MODBUS_TCP ] Initialised → %s\n", DB_PATH);
+    printf("[ MODBUS_TCP ] Initialised → %s\n", db_path);
     return 0;
 }
 
@@ -209,7 +213,7 @@ static void cleanup(master_ctx_t *ctx)
     }
 }
 
-/**
+/*
  * @brief Modbus TCP polling thread.
  *
  * Initializes the SQLite database, connects to the Modbus TCP slave,
@@ -282,21 +286,33 @@ void *mb_thread_func1(void *arg)
     }
 
 
+    extern atomic_int running;
+
     /*
-     * Initial Modbus TCP connection.
+     * Initial Modbus TCP connection: keep trying (every 5 s) so a slave
+     * that is down when the gateway starts is polled once it comes up.
      */
     ctx.mb_ctx =
         mb_connect(ctx.slave_ip,
                    ctx.slave_port,
                    ctx.slave_id);
 
-    if (ctx.mb_ctx == NULL)
+    while (running && ctx.mb_ctx == NULL)
     {
         fprintf(stderr,
-                "[ MODBUS_TCP ] Initial Modbus connect failed.\n");
+                "[ MODBUS_TCP ] Initial Modbus connect failed. "
+                "Retrying in 5 seconds...\n");
 
+        for (int i = 0; i < 5 && running; i++)
+            sleep(1);
+
+        if (running)
+            ctx.mb_ctx = mb_connect(ctx.slave_ip, ctx.slave_port, ctx.slave_id);
+    }
+
+    if (ctx.mb_ctx == NULL)
+    {
         cleanup(&ctx);
-
         return NULL;
     }
 
@@ -307,7 +323,6 @@ void *mb_thread_func1(void *arg)
     /*
      * Main polling loop.
      */
-    extern atomic_int running;
 
     while (running)
     {

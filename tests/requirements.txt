@@ -1,0 +1,4 @@
+# Test dependencies (validate stage; later also unit/HIL). The tool's own
+# requirements are in tools/smart_rtu_tool/requirements.txt.
+pytest==8.3.5
+jsonschema==4.23.0

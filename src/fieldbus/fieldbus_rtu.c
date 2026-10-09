@@ -29,10 +29,10 @@
  */
 typedef struct
 {
-    modbus_t *mb_ctx;
-    char      port[64];
-    int       baud;
-    int       slave_id;
+    modbus_t *mb_ctx;     /**< libmodbus RTU context. */
+    char      port[64];   /**< Serial device, e.g. /dev/ttySTM2. */
+    int       baud;       /**< Baud rate in use. */
+    int       slave_id;   /**< Slave addressed by the next request (see rtu_set_slave()). */
 } rtu_ctx_t;
 
 /* -------------------------------------------------------------------------- */
@@ -144,7 +144,8 @@ static void *rtu_init(const fieldbus_config_t *config)
     }
 
     /* Enable libmodbus debug output to see raw frames. */
-    modbus_set_debug(ctx->mb_ctx, TRUE);
+    /* Frame dump (every request/response) only on demand: GATEWAY_MODBUS_DEBUG=1. */
+    modbus_set_debug(ctx->mb_ctx, getenv("GATEWAY_MODBUS_DEBUG") != NULL);
 
     printf("[FIELDBUS_RTU] Opened %s @ %d baud, parity=%c, "
            "stop=%d (slave %d)\n",
@@ -460,6 +461,7 @@ static void rtu_close(void *vctx)
 /* Driver vtable                                                              */
 /* -------------------------------------------------------------------------- */
 
+/** @brief Modbus RTU implementation of the fieldbus driver interface. */
 static const fieldbus_driver_t modbus_rtu_driver = {
     .name           = "modbus_rtu",
     .init           = rtu_init,

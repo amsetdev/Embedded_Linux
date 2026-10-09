@@ -19,7 +19,8 @@ extern "C" {
 /* -------------------------------------------------------------------------- */
 
 /**
- * @brief SQLite database used for offline MQTT storage.
+ * @brief Unused (legacy name). Offline payloads are stored as one file each in
+ *        STORAGE_DIR (storage.c), not in an SQLite database.
  */
 #define MQTT_STORAGE_DB "mqtt_storage.db"
 

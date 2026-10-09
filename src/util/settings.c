@@ -9,12 +9,18 @@
 
 #include "settings.h"
 #include "json.h"
+#include "paths.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <unistd.h>
 
 AppSettings cfg;
+
+/** @brief Set by settings_request_reload(), consumed by settings_take_reload_request(). */
+static atomic_int reload_request = 0;
 
 /*------------------------------------------------------------*/
 /**
@@ -80,9 +86,15 @@ void settings_defaults(void)
              OTA_SYSTEM_TOPIC_DEF, cfg.device_id);
     snprintf(cfg.ota_status_topic, sizeof(cfg.ota_status_topic),
              OTA_STATUS_TOPIC_DEF, cfg.device_id);
-    strcpy(cfg.ota_download_dir, OTA_DOWNLOAD_DIR_DEF);
+    paths_data("ota", cfg.ota_download_dir, sizeof(cfg.ota_download_dir));
     strcpy(cfg.app_version, APP_VERSION_DEF);
-    strcpy(cfg.app_binary_path, APP_BINARY_PATH_DEF);
+
+    /* OTA replaces the binary that is actually running. */
+    ssize_t n = readlink("/proc/self/exe", cfg.app_binary_path, sizeof(cfg.app_binary_path) - 1);
+    if (n > 0)
+        cfg.app_binary_path[n] = '\0';
+    else
+        strcpy(cfg.app_binary_path, APP_BINARY_PATH_DEF);
 }
 
 /*------------------------------------------------------------*/
@@ -105,12 +117,12 @@ int settings_load(void)
 {
     settings_defaults();
 
-    char *json = read_file(SETTINGS_FILE);
+    char *json = read_file(paths_config());
 
     if (json == NULL)
     {
         printf("[SETTINGS] %s not found. Using defaults.\n",
-               SETTINGS_FILE);
+               paths_config());
         return -1;
     }
 
@@ -118,7 +130,9 @@ int settings_load(void)
     /* Device                                                */
     /*------------------------------------------------------*/
 
-    char *device = strstr(json, "\"device\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *device = json_object_dup(json, "device");
 
     if (device)
     {
@@ -147,13 +161,26 @@ int settings_load(void)
         json_get_int(device,
                      "stop_bits",
                      &cfg.modbus_stop_bits);
+
+        free(device);
     }
+
+    /* Default OTA topics contain the device ID: build them from the configured
+     * one (an "ota" section below may still override them). */
+    snprintf(cfg.ota_app_topic, sizeof(cfg.ota_app_topic),
+             OTA_APP_TOPIC_DEF, cfg.device_id);
+    snprintf(cfg.ota_system_topic, sizeof(cfg.ota_system_topic),
+             OTA_SYSTEM_TOPIC_DEF, cfg.device_id);
+    snprintf(cfg.ota_status_topic, sizeof(cfg.ota_status_topic),
+             OTA_STATUS_TOPIC_DEF, cfg.device_id);
 
     /*------------------------------------------------------*/
     /* WiFi                                                  */
     /*------------------------------------------------------*/
 
-    char *wifi = strstr(json, "\"wifi\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *wifi = json_object_dup(json, "wifi");
 
     if (wifi)
     {
@@ -175,13 +202,17 @@ int settings_load(void)
         json_get_int(wifi,
                      "enable",
                      &cfg.wifi_enable);
+
+        free(wifi);
     }
 
     /*------------------------------------------------------*/
     /* MQTT (AWS IoT Core)                                   */
     /*------------------------------------------------------*/
 
-    char *mqtt = strstr(json, "\"mqtt\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *mqtt = json_object_dup(json, "mqtt");
 
     if (mqtt)
     {
@@ -218,13 +249,17 @@ int settings_load(void)
                         "topic",
                         cfg.mqtt_topic,
                         sizeof(cfg.mqtt_topic));
+
+        free(mqtt);
     }
 
     /*------------------------------------------------------*/
     /* Modbus TCP                                            */
     /*------------------------------------------------------*/
 
-    char *mbtcp = strstr(json, "\"modbus_tcp\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *mbtcp = json_object_dup(json, "modbus_tcp");
 
     if (mbtcp)
     {
@@ -244,13 +279,17 @@ int settings_load(void)
         json_get_int(mbtcp,
                      "slave_id",
                      &cfg.modbus_tcp_slave_id);
+
+        free(mbtcp);
     }
 
     /*------------------------------------------------------*/
     /* OTA                                                   */
     /*------------------------------------------------------*/
 
-    char *ota = strstr(json, "\"ota\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *ota = json_object_dup(json, "ota");
 
     if (ota)
     {
@@ -287,13 +326,17 @@ int settings_load(void)
                         "app_binary_path",
                         cfg.app_binary_path,
                         sizeof(cfg.app_binary_path));
+
+        free(ota);
     }
 
     /*------------------------------------------------------*/
     /* Watchdog                                              */
     /*------------------------------------------------------*/
 
-    char *wdg = strstr(json, "\"watchdog\"");
+    /* Only this section: a key it lacks keeps its default instead of being
+     * read from a later section. */
+    char *wdg = json_object_dup(json, "watchdog");
 
     if (wdg)
     {
@@ -304,6 +347,8 @@ int settings_load(void)
         json_get_int(wdg,
                      "timeout",
                      &cfg.watchdog_timeout);
+
+        free(wdg);
     }
 
     free(json);
@@ -367,4 +412,16 @@ int settings_reload(void)
     printf("[SETTINGS] Reloading configuration...\n");
 
     return settings_load();
+}
+
+/* Documented in settings.h. */
+void settings_request_reload(void)
+{
+    atomic_store(&reload_request, 1);
+}
+
+/* Documented in settings.h. */
+int settings_take_reload_request(void)
+{
+    return atomic_exchange(&reload_request, 0);
 }

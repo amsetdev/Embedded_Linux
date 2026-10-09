@@ -112,7 +112,7 @@ int watchdog_init(void)
     return 1;
 }
 
-/**
+/*
  * @brief Registers a thread for health monitoring.
  *
  * @param name  Human-readable thread name.
@@ -151,7 +151,7 @@ int watchdog_register(const char *name)
     return id;
 }
 
-/**
+/*
  * @brief Reports a heartbeat from a monitored thread.
  *
  * @param id  Thread ID from watchdog_register().
@@ -171,7 +171,7 @@ void watchdog_heartbeat(int id)
     pthread_mutex_unlock(&wdg_mutex);
 }
 
-/**
+/*
  * @brief Watchdog monitor thread.
  *
  * Checks heartbeat timestamps every WDG_CHECK_INTERVAL seconds.

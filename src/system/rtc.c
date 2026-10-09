@@ -113,7 +113,7 @@ void unmap_retram(void)
     }
 }
 
-/**
+/*
  * @brief Writes a 32-bit value to a RETRAM register.
  *
  * @param offset Register offset from the RETRAM base address.
@@ -124,7 +124,7 @@ void reg_write32(uint32_t offset, uint32_t val)
     *(volatile uint32_t *)(retram_map + offset) = val;
 }
 
-/**
+/*
  * @brief Reads a 32-bit value from a RETRAM register.
  *
  * @param offset Register offset from the RETRAM base address.

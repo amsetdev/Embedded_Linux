@@ -84,6 +84,18 @@ void build_payload(char *buf, size_t buflen);
 void mqtt_publish(const char *payload);
 
 /**
+ * @brief Publishes a payload on the telemetry topic and waits for the broker's PUBACK.
+ *
+ * Unlike mqtt_publish() the payload is NOT stored offline on failure: the
+ * caller (the offline replay) keeps its file instead.
+ *
+ * @param payload    NUL-terminated payload.
+ * @param timeout_ms How long to wait for the PUBACK.
+ * @return 0 when the broker confirmed the message, -1 otherwise.
+ */
+int mqtt_publish_confirmed(const char *payload, int timeout_ms);
+
+/**
  * @brief Cleans up MQTT resources.
  *
  * Stops the MQTT network loop, disconnects from the broker,

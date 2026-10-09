@@ -1,0 +1,5 @@
+# HIL tests (tests/hil): SSH to the board, simulated Modbus slaves, AWS IoT observer.
+paramiko==3.5.1
+pymodbus==3.6.9
+pyserial==3.5
+paho-mqtt==2.1.0

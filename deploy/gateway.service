@@ -1,0 +1,23 @@
+# systemd unit of the STM32MP1 gateway (installed by deploy/install.sh).
+# Layout: DOCS/DEPLOYMENT.md. Logs: journalctl -u gateway. Reload config: systemctl reload gateway.
+[Unit]
+Description=STM32MP1 Modbus/MQTT gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/gateway/bin/gateway --config /etc/gateway/smart_rtu_config.json --data-dir /var/lib/gateway
+# SIGHUP: reload settings, MQTT and the register list without a restart
+ExecReload=/bin/kill -HUP $MAINPID
+WorkingDirectory=/var/lib/gateway
+# Also covers app OTA: the new binary is exec'd in place; if that fails the app exits and is restarted.
+Restart=always
+RestartSec=3
+# A clean stop takes a few seconds (threads finish their current step); never wait 90 s.
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

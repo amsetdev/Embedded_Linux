@@ -20,6 +20,7 @@ Requires: pyserial
 """
 
 from __future__ import annotations
+import secrets
 import time
 from typing import Optional
 
@@ -32,6 +33,21 @@ from core.transport import Transport, TransportResult
 # Keep the old name around as an alias so existing call sites that
 # reference ``SerialResult`` directly keep working during migration.
 SerialResult = TransportResult
+
+DONE_MARKER = "__RTU_TOOL_DONE__"
+START_MARKER = "__RTU_TOOL_START__"
+END_MARKER = "__RTU_TOOL_END__"
+
+
+def echo_marker(marker: str) -> str:
+    """Shell command printing `marker` whose typed text does NOT contain it.
+
+    A serial console echoes everything typed, so `echo MARKER` would show the
+    marker before the command even ran. The shell joins `AB""CD` into `ABCD`,
+    but the echoed command line still reads `AB""CD`.
+    """
+    half = len(marker) // 2
+    return f'echo {marker[:half]}""{marker[half:]}'
 
 
 class SerialTransport(Transport):
@@ -89,9 +105,14 @@ class SerialTransport(Transport):
             ser = self._open()
             self._login(ser, username, password)
 
-            marker = "__RTU_TOOL_DONE__"
-            cmd = f"cat > {remote_path}.tmp << 'EOF'\n{content}EOF\n"
-            cmd += f"mv {remote_path}.tmp {remote_path} && echo {marker}\n"
+            marker = DONE_MARKER
+            if not content.endswith("\n"):
+                content += "\n"          # the heredoc terminator must start a line
+            term = "RTU_EOF_" + secrets.token_hex(4)
+            while term in content:
+                term = "RTU_EOF_" + secrets.token_hex(4)
+            cmd = f"cat > {remote_path}.tmp << '{term}'\n{content}{term}\n"
+            cmd += f"mv {remote_path}.tmp {remote_path} && {echo_marker(marker)}\n"
             ser.write(cmd.encode())
 
             deadline = time.time() + 10
@@ -156,9 +177,9 @@ class SerialTransport(Transport):
             ser = self._open()
             self._login(ser, username, password)
 
-            start_marker = "__RTU_TOOL_START__"
-            end_marker = "__RTU_TOOL_END__"
-            cmd = f"echo {start_marker}; cat {remote_path}; echo {end_marker}\n"
+            start_marker = START_MARKER
+            end_marker = END_MARKER
+            cmd = f"{echo_marker(start_marker)}; cat {remote_path}; {echo_marker(end_marker)}\n"
             ser.write(cmd.encode())
 
             deadline = time.time() + 10
@@ -176,7 +197,8 @@ class SerialTransport(Transport):
             text = buf.decode(errors="replace")
             if start_marker not in text or end_marker not in text:
                 return TransportResult(False, "No response seen — check console connection/login.")
-            content = text.split(start_marker, 1)[1].split(end_marker, 1)[0].strip("\r\n")
+            content = text.split(start_marker, 1)[1].split(end_marker, 1)[0]
+            content = content.replace("\r\n", "\n").strip("\n")
             if "No such file" in content:
                 return TransportResult(False, f"No file found on device at {remote_path}")
             return TransportResult(True, content)
@@ -190,8 +212,8 @@ class SerialTransport(Transport):
         try:
             ser = self._open()
             self._login(ser, username, password)
-            marker = "__RTU_TOOL_DONE__"
-            ser.write(f"rm -f {remote_path} && echo {marker}\n".encode())
+            marker = DONE_MARKER
+            ser.write(f"rm -f {remote_path} && {echo_marker(marker)}\n".encode())
 
             deadline = time.time() + 10
             buf = b""

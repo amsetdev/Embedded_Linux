@@ -1,3 +1,14 @@
+> **Status (2026-10-07): implemented — the firmware side now exists.** The MQTT
+> config topic carries the **JSON** (not the CSV): the tool publishes
+> `smart_rtu_config.json` retained on `amset/<device_id>/config/set`; the firmware
+> (`src/cloud/mqtt.c`, `src/cloud/config_push.c`, `inc/config_push.h`) saves it if it
+> changed, reloads settings and registers, and answers on
+> `amset/<device_id>/config/ack` with
+> `{"status":"saved"|"unchanged"|"rejected"|"error","registers":N,"error":"…"}`.
+> The CSV is still written next to the JSON over SSH/serial, but no firmware code reads
+> it. Sections below that describe CSV parsing over MQTT are the original proposal.
+> Details: `DOCS/CI_CD_GUIDE.md` §6.1.
+
 # Firmware changes needed for the new single combined config file
 
 The tool used to write three separate files to the board
